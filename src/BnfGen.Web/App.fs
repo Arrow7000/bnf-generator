@@ -3,6 +3,7 @@ module BnfGen.Web.App
 open Elmish
 open Elmish.React
 open Feliz
+open Fable.Core
 open BnfGen
 
 // ---------------------------------------------------------------------------
@@ -53,6 +54,7 @@ type Msg =
     | ToggleAdvanced
     | SetReps of int
     | SetDepth of int
+    | Regenerate
 
 let private filtersOf (m: Model) : Pipeline.Filters =
     if not m.ShowAdvanced then
@@ -64,22 +66,35 @@ let private filtersOf (m: Model) : Pipeline.Filters =
 let private regenerate (model: Model) : Model =
     { model with Output = Pipeline.generateWith (filtersOf model) model.Source model.MaxSize displayLimit }
 
-let private init () : Model =
+// Coalesce rapid changes (e.g. dragging the slider) into one regeneration after
+// a short quiet period, so heavy grammars don't recompute on every step.
+let mutable private debounceHandle: int = -1
+
+let private scheduleRegen: Cmd<Msg> =
+    Cmd.ofEffect (fun dispatch ->
+        if debounceHandle >= 0 then
+            JS.clearTimeout debounceHandle
+
+        debounceHandle <- JS.setTimeout (fun () -> dispatch Regenerate) 200)
+
+let private init () : Model * Cmd<Msg> =
     regenerate
         { Source = sampleGrammar
           MaxSize = 18
           ShowAdvanced = false
           RepLimit = repSliderMax
           DepthLimit = depthSliderMax
-          Output = Pipeline.generate "" 0 0 }
+          Output = Pipeline.generate "" 0 0 },
+    Cmd.none
 
-let private update (msg: Msg) (model: Model) : Model =
+let private update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
     match msg with
-    | SetSource s -> regenerate { model with Source = s }
-    | SetSize n -> regenerate { model with MaxSize = n }
-    | ToggleAdvanced -> regenerate { model with ShowAdvanced = not model.ShowAdvanced }
-    | SetReps n -> regenerate { model with RepLimit = n }
-    | SetDepth n -> regenerate { model with DepthLimit = n }
+    | SetSource s -> { model with Source = s }, scheduleRegen
+    | SetSize n -> { model with MaxSize = n }, scheduleRegen
+    | SetReps n -> { model with RepLimit = n }, scheduleRegen
+    | SetDepth n -> { model with DepthLimit = n }, scheduleRegen
+    | ToggleAdvanced -> regenerate { model with ShowAdvanced = not model.ShowAdvanced }, Cmd.none
+    | Regenerate -> regenerate model, Cmd.none
 
 // ---------------------------------------------------------------------------
 // View
@@ -287,9 +302,12 @@ let private thisRunView (out: Pipeline.Output) =
                                     (textValue (string s.MaxRecursionDepth))
                                 metric
                                     "Minimal cover"
-                                    [ "The smallest set of samples that together hit every rule and branch reached so far (greedy set-cover)."
-                                      "Exhaustiveness as a handful of examples rather than a flood: these samples are starred in the list below." ]
-                                    (textValue (sprintf "%d sample(s)" s.MinimalCoverSize)) ] ]
+                                    [ "The smallest set of samples that TOGETHER hit every rule and branch (greedy set-cover)."
+                                      "Only defined once coverage is complete - until then, raise the size bound to full coverage. The members are marked in the list below." ]
+                                    (if s.FullyCovered then
+                                         textValue (sprintf "%d sample(s)" s.MinimalCoverSize)
+                                     else
+                                         Html.span [ prop.className "metric-muted"; prop.text "reach full coverage" ]) ] ]
                     coverageBar "Rules" s.RulesCovered s.RulesTotal
                     coverageBar "Branches" s.BranchesCovered s.BranchesTotal
                     Html.div [ prop.className "chart-wrap"; prop.children [ growthChart s.Growth s.SaturationSize ] ]
@@ -376,6 +394,33 @@ let private samplesView (out: Pipeline.Output) =
                                                 [ prop.className "tip-p"
                                                   prop.text (sprintf "%s class - one member shown; the class is not exhausted." label) ] ] ] ] ])
 
+    let coverCount = out.Samples |> List.filter (fun s -> s.InMinimalCover) |> List.length
+
+    let coverChip =
+        Html.span
+            [ prop.className "cover-chip tip"
+              prop.children
+                  [ Html.span [ prop.text "cover" ]
+                    Html.span
+                        [ prop.className "tip-content tip-content-sm"
+                          prop.children
+                              [ Html.p
+                                    [ prop.className "tip-p"
+                                      prop.text
+                                          "The rows marked 'cover' together form a minimal set that exercises every rule and branch. No single one is complete on its own - it is the whole marked set that covers everything." ] ] ] ] ]
+
+    let coverNote =
+        match coverCount with
+        | 0 -> Html.none
+        | 1 ->
+            Html.p
+                [ prop.className "cover-note"
+                  prop.text "The marked sample alone exercises every rule and branch." ]
+        | n ->
+            Html.p
+                [ prop.className "cover-note"
+                  prop.text (sprintf "The %d marked samples together exercise every rule and branch." n) ]
+
     let rows =
         out.Samples
         |> List.map (fun s ->
@@ -384,17 +429,14 @@ let private samplesView (out: Pipeline.Output) =
                   prop.children
                       [ Html.span [ prop.className "sample-size"; prop.text (string s.Size) ]
                         Html.code [ prop.className "sample-text"; prop.children (renderSegments s.Segments) ]
-                        if s.InMinimalCover then
-                            Html.span
-                                [ prop.className "cover-chip"
-                                  prop.title "Part of the minimal covering set"
-                                  prop.text "cover" ] ] ])
+                        if s.InMinimalCover then coverChip ] ])
 
     Html.div
         [ prop.className "panel"
           prop.children
               [ Html.h2 [ prop.text "Samples" ]
                 header
+                coverNote
                 columns
                 Html.div [ prop.className "sample-list"; prop.children rows ] ] ]
 
@@ -518,6 +560,6 @@ let private view (model: Model) (dispatch: Msg -> unit) =
 // Program
 // ---------------------------------------------------------------------------
 
-Program.mkSimple init update view
+Program.mkProgram init update view
 |> Program.withReactSynchronous "app"
 |> Program.run

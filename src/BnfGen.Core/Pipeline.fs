@@ -186,19 +186,27 @@ module Pipeline =
                               cumulative <- cumulative + (Map.tryFind n bySize |> Option.defaultValue 0)
                               yield (n, cumulative) ]
 
-                // Minimal covering set. Samples up to the saturation size already
-                // achieve full coverage, so we only search among those.
-                let coverCutoff =
-                    match saturation with
-                    | Some n -> n
-                    | None -> maxSize
+                // Minimal covering set. This is only well-defined once the run
+                // actually achieves full coverage: only then is every cover
+                // member guaranteed to be present, and the chosen set stable.
+                // (Below saturation the "cover of what's revealed so far" would
+                // shift as you raise the bound, which is misleading.)
+                let coverKeys =
+                    if fullyCovered then
+                        let cutoff =
+                            match saturation with
+                            | Some n -> n
+                            | None -> maxSize
 
-                let coverCandidates =
-                    distinct
-                    |> List.filter (fun e -> e.Size <= coverCutoff)
-                    |> List.map (fun e -> e.Text, e.Tokens)
+                        let candidates =
+                            distinct
+                            |> List.filter (fun e -> e.Size <= cutoff)
+                            |> List.sortBy (fun e -> e.Size, e.Text)
+                            |> List.map (fun e -> e.Text, e.Tokens)
 
-                let coverKeys = greedyCover coveredAll coverCandidates
+                        greedyCover coveredAll candidates
+                    else
+                        Set.empty
 
                 let samples =
                     distinct
