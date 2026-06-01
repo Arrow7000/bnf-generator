@@ -1,0 +1,20 @@
+# .NET build output
+bin/
+obj/
+*.user
+
+# Fable output
+.fable/
+fable_modules/
+*.fs.js
+
+# Node / Vite
+node_modules/
+dist/
+.vite/
+
+# Editor / OS
+.vs/
+.idea/
+.DS_Store
+*.swp

@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/BnfGen.Cli/BnfGen.Cli.fsproj" />
+    <Project Path="src/BnfGen.Core/BnfGen.Core.fsproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/BnfGen.Tests/BnfGen.Tests.fsproj" />
+  </Folder>
+</Solution>
