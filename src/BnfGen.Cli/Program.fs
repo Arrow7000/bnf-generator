@@ -39,6 +39,7 @@ let private printSummary (s: Pipeline.Summary) =
     printfn "  rule coverage: %d/%d" s.RulesCovered s.RulesTotal
     printfn "  branch coverage: %d/%d" s.BranchesCovered s.BranchesTotal
     printfn "  fully covered: %b" s.FullyCovered
+    printfn "  minimal covering set: %d sample(s)" s.MinimalCoverSize
 
     match s.SaturationSize with
     | Some n -> printfn "  coverage saturated at size: %d" n
@@ -103,7 +104,10 @@ let main argv =
                 printfn "Samples (%d distinct, size <= %d):" result.DistinctCount size
 
                 for s in result.Samples do
-                    printfn "  (%2d) %s" s.Size s.Text
+                    let mark = if s.InMinimalCover then "*" else " "
+                    printfn " %s(%2d) %s" mark s.Size s.Text
+
+                printfn "  (* = part of the minimal covering set)"
 
                 if result.Truncated then
                     printfn "  ... (enumeration truncated at the scan cap)"

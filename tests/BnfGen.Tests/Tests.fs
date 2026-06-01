@@ -216,6 +216,69 @@ let ``coverage saturates at a finite size for an infinite grammar`` () =
     | None -> Assert.Fail "expected a summary"
 
 // ---------------------------------------------------------------------------
+// Filters, minimal cover, and structured rendering
+// ---------------------------------------------------------------------------
+
+[<Fact>]
+let ``max-reps filter of zero removes all loop repetitions`` () =
+    let filters = { Pipeline.noFilters with MaxReps = Some 0 }
+    let out = Pipeline.generateWith filters """ S ::= "a"* """ 8 200
+    let ts = texts out
+    Assert.Contains("", ts)
+    Assert.DoesNotContain("a", ts)
+    Assert.DoesNotContain("aa", ts)
+
+[<Fact>]
+let ``max-depth filter bounds recursion`` () =
+    let filters = { Pipeline.noFilters with MaxDepth = Some 2 }
+    let out = Pipeline.generateWith filters """ parens ::= "(" parens ")" | "" """ 30 200
+
+    match out.Summary with
+    | Some s -> Assert.True(s.MaxRecursionDepth <= 2)
+    | None -> Assert.Fail "expected a summary"
+
+[<Fact>]
+let ``minimal cover is small and present among the samples`` () =
+    // A single (0) exercises every rule and both factor branches.
+    let out = gen """ expr ::= term ("+" term)*
+                      term ::= factor ("*" factor)*
+                      factor ::= [0-9] | "(" expr ")" """ 18
+
+    match out.Summary with
+    | Some s ->
+        Assert.True(s.MinimalCoverSize >= 1)
+        Assert.True(s.MinimalCoverSize <= out.DistinctCount)
+        let coverCount = out.Samples |> List.filter (fun x -> x.InMinimalCover) |> List.length
+        Assert.Equal(s.MinimalCoverSize, coverCount)
+    | None -> Assert.Fail "expected a summary"
+
+[<Fact>]
+let ``char classes render as a highlightable segment`` () =
+    let out = gen """ ip ::= [0-9] "." [0-9] """ 8
+
+    let hasClassSegment =
+        out.Samples
+        |> List.exists (fun s ->
+            s.Segments
+            |> List.exists (fun seg ->
+                match seg with
+                | Render.ClassSeg (_, label) -> label = "[0-9]"
+                | _ -> false))
+
+    Assert.True(hasClassSegment)
+
+[<Fact>]
+let ``growth curve is non-decreasing`` () =
+    let out = gen """ list ::= list "," "x" | "x" """ 20
+
+    match out.Summary with
+    | Some s ->
+        let counts = s.Growth |> List.map snd
+        let sorted = counts |> List.sort
+        Assert.Equal<int list>(sorted, counts)
+    | None -> Assert.Fail "expected a summary"
+
+// ---------------------------------------------------------------------------
 // Property-based tests over randomly generated small grammars
 // ---------------------------------------------------------------------------
 
