@@ -1,0 +1,21 @@
+{
+  "name": "bnfgen-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fable": "dotnet fable -o build",
+    "fable:watch": "dotnet fable watch -o build",
+    "dev": "concurrently -k -n fable,vite \"npm:fable:watch\" \"vite\"",
+    "build": "dotnet fable -o build && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.1",
+    "vite": "^8.0.16"
+  }
+}

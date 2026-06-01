@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EBNF Sample Generator</title>
+    <style>
+      :root {
+        --bg: #0f1117;
+        --panel: #181b24;
+        --panel-2: #1f2330;
+        --border: #2a2f3d;
+        --text: #e6e8ee;
+        --muted: #8b91a3;
+        --accent: #6ea8fe;
+        --error: #ff6b6b;
+        --warn: #ffb454;
+        --info: #6ea8fe;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        line-height: 1.5;
+      }
+
+      .app { max-width: 1200px; margin: 0 auto; padding: 24px; }
+
+      .app-header h1 { margin: 0 0 4px; font-size: 1.6rem; }
+      .subtitle { margin: 0 0 20px; color: var(--muted); }
+
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+        gap: 20px;
+        align-items: start;
+      }
+
+      @media (max-width: 860px) {
+        .layout { grid-template-columns: 1fr; }
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 16px;
+        margin-bottom: 20px;
+      }
+
+      .panel h2 { margin: 0 0 12px; font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+      .grammar-input {
+        width: 100%;
+        min-height: 240px;
+        resize: vertical;
+        background: var(--panel-2);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px;
+        font-family: var(--mono);
+        font-size: 0.9rem;
+        tab-size: 2;
+      }
+
+      .grammar-input:focus { outline: none; border-color: var(--accent); }
+
+      .size-control { margin-top: 14px; }
+      .size-control label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 0.9rem; }
+      .size-control input[type="range"] { width: 100%; accent-color: var(--accent); }
+
+      .diag-list { display: flex; flex-direction: column; gap: 8px; }
+      .diag {
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: var(--panel-2);
+        font-size: 0.9rem;
+      }
+      .diag-tag {
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        padding: 2px 6px;
+        border-radius: 4px;
+        white-space: nowrap;
+        background: rgba(255,255,255,0.06);
+      }
+      .diag-error { border-left: 3px solid var(--error); }
+      .diag-error .diag-tag { color: var(--error); }
+      .diag-warn { border-left: 3px solid var(--warn); }
+      .diag-warn .diag-tag { color: var(--warn); }
+      .diag-info { border-left: 3px solid var(--info); }
+      .diag-info .diag-tag { color: var(--info); }
+
+      .muted { color: var(--muted); }
+
+      .samples-meta { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; color: var(--muted); font-size: 0.9rem; }
+      .badge { font-size: 0.72rem; padding: 2px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.03em; }
+      .badge-warn { background: rgba(255,180,84,0.15); color: var(--warn); }
+      .badge-info { background: rgba(110,168,254,0.15); color: var(--info); }
+
+      .sample-list { display: flex; flex-direction: column; gap: 4px; max-height: 60vh; overflow: auto; }
+      .sample {
+        display: flex;
+        gap: 12px;
+        align-items: baseline;
+        padding: 6px 8px;
+        border-radius: 6px;
+      }
+      .sample:nth-child(odd) { background: var(--panel-2); }
+      .sample-size {
+        font-family: var(--mono);
+        font-size: 0.75rem;
+        color: var(--muted);
+        min-width: 2.2em;
+        text-align: right;
+      }
+      .sample-text { font-family: var(--mono); font-size: 0.92rem; word-break: break-all; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/build/App.js"></script>
+  </body>
+</html>

@@ -113,13 +113,21 @@ module Parser =
         st.Pos <- saved
         result
 
+    let private hexValue (c: char) : int =
+        if c >= '0' && c <= '9' then int c - int '0'
+        elif c >= 'a' && c <= 'f' then 10 + int c - int 'a'
+        else 10 + int c - int 'A'
+
     let private readHexChar (st: State) : char =
-        // Assumes the leading "#x" has already been consumed.
+        // Assumes the leading "#x" has already been consumed. Accumulates the
+        // code point manually (Fable has no Convert.ToInt32 with a base arg).
         let start = st.Pos
+        let mutable code = 0
 
         let rec loop () =
             match peek st with
             | Some c when isHexDigit c ->
+                code <- code * 16 + hexValue c
                 advance st
                 loop ()
             | _ -> ()
@@ -129,8 +137,6 @@ module Parser =
         if st.Pos = start then
             fail st "Expected hexadecimal digits after #x"
 
-        let hex = st.Src.Substring(start, st.Pos - start)
-        let code = System.Convert.ToInt32(hex, 16)
         char code
 
     /// Parse a single character inside a `[...]` class, supporting `#xNN`.
