@@ -13,6 +13,7 @@
     <Compile Include="Render.fs" />
     <Compile Include="Coverage.fs" />
     <Compile Include="Pipeline.fs" />
+    <Compile Include="Presets.fs" />
   </ItemGroup>
 
 </Project>

@@ -10,29 +10,7 @@ open BnfGen
 // Model
 // ---------------------------------------------------------------------------
 
-let private sampleGrammar =
-    "expr   ::= term (\"+\" term)*\n"
-    + "term   ::= factor (\"*\" factor)*\n"
-    + "factor ::= [0-9] | \"(\" expr \")\""
-
-/// Built-in grammars, ordered roughly simple -> complex, including one that is
-/// deliberately broken to show the error path.
-let private presets : (string * string) list =
-    [ "Greeting (finite)", "greeting ::= (\"hello\" | \"hi\") \" \" (\"world\" | \"there\")"
-      "Optional and repetition", "s ::= \"a\" \"b\"? \"c\"*"
-      "Balanced parentheses", "parens ::= \"(\" parens \")\" | \"\""
-      "Recursive list (left)", "list ::= list \",\" \"x\" | \"x\""
-      "Arithmetic (infinite)", sampleGrammar
-      "JSON value",
-      ("value    ::= object | array | string | number | \"true\" | \"false\" | \"null\"\n"
-       + "object   ::= \"{}\" | \"{\" members \"}\"\n"
-       + "members  ::= pair | pair \",\" members\n"
-       + "pair     ::= string \":\" value\n"
-       + "array    ::= \"[]\" | \"[\" elements \"]\"\n"
-       + "elements ::= value | value \",\" elements\n"
-       + "string   ::= '\"' [a-z]+ '\"'\n"
-       + "number   ::= [0-9]+")
-      "Non-productive (error demo)", "a ::= \"x\" a" ]
+let private presets = Presets.all
 
 let private displayLimit = 200
 
@@ -79,8 +57,8 @@ let private scheduleRegen: Cmd<Msg> =
 
 let private init () : Model * Cmd<Msg> =
     regenerate
-        { Source = sampleGrammar
-          MaxSize = 18
+        { Source = Presets.defaultSource
+          MaxSize = 24
           ShowAdvanced = false
           RepLimit = repSliderMax
           DepthLimit = depthSliderMax

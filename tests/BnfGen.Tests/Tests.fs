@@ -159,6 +159,35 @@ let ``star produces increasing repetitions including empty`` () =
     Assert.Contains("aa", ts)
 
 // ---------------------------------------------------------------------------
+// Built-in presets
+// ---------------------------------------------------------------------------
+
+[<Fact>]
+let ``every preset parses`` () =
+    for (name, src) in Presets.all do
+        match Parser.parse src with
+        | Result.Ok _ -> ()
+        | Result.Error e -> Assert.Fail(sprintf "preset '%s' failed to parse: %d:%d %s" name e.Line e.Column e.Message)
+
+[<Fact>]
+let ``presets are viable except the error demo`` () =
+    // Generous bound so every viable preset yields at least one sample (the
+    // EBNF self-grammar's smallest derivation is already 15 nodes).
+    for (name, src) in Presets.all do
+        let out = gen src 24
+        Assert.True(out.ParseError.IsNone, sprintf "preset '%s' has a parse error" name)
+
+        if name.Contains "error" then
+            Assert.True(out.Fatal, sprintf "preset '%s' should be fatal" name)
+        else
+            Assert.False(out.Fatal, sprintf "preset '%s' should be viable: %s" name (messages out))
+
+            Assert.True(
+                not (List.isEmpty out.Samples),
+                sprintf "preset '%s' produced no samples (minSize=%A)" name (out.Summary |> Option.bind (fun s -> s.MinSize))
+            )
+
+// ---------------------------------------------------------------------------
 // Language classification (Empty / Finite / Infinite)
 // ---------------------------------------------------------------------------
 
