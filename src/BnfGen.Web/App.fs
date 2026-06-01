@@ -14,6 +14,25 @@ let private sampleGrammar =
     + "term   ::= factor (\"*\" factor)*\n"
     + "factor ::= [0-9] | \"(\" expr \")\""
 
+/// Built-in grammars, ordered roughly simple -> complex, including one that is
+/// deliberately broken to show the error path.
+let private presets : (string * string) list =
+    [ "Greeting (finite)", "greeting ::= (\"hello\" | \"hi\") \" \" (\"world\" | \"there\")"
+      "Optional and repetition", "s ::= \"a\" \"b\"? \"c\"*"
+      "Balanced parentheses", "parens ::= \"(\" parens \")\" | \"\""
+      "Recursive list (left)", "list ::= list \",\" \"x\" | \"x\""
+      "Arithmetic (infinite)", sampleGrammar
+      "JSON value",
+      ("value    ::= object | array | string | number | \"true\" | \"false\" | \"null\"\n"
+       + "object   ::= \"{}\" | \"{\" members \"}\"\n"
+       + "members  ::= pair | pair \",\" members\n"
+       + "pair     ::= string \":\" value\n"
+       + "array    ::= \"[]\" | \"[\" elements \"]\"\n"
+       + "elements ::= value | value \",\" elements\n"
+       + "string   ::= '\"' [a-z]+ '\"'\n"
+       + "number   ::= [0-9]+")
+      "Non-productive (error demo)", "a ::= \"x\" a" ]
+
 let private displayLimit = 200
 
 type Model =
@@ -31,7 +50,7 @@ let private regenerate (model: Model) : Model =
 let private init () : Model =
     regenerate
         { Source = sampleGrammar
-          MaxSize = 16
+          MaxSize = 18
           Output = Pipeline.generate "" 0 0 }
 
 let private update (msg: Msg) (model: Model) : Model =
@@ -61,11 +80,24 @@ let private laneLabel (l: Ast.Lane) =
     | Ast.Parsing -> "parsing"
     | Ast.Structure -> "structure"
 
-let private metric (label: string) (value: ReactElement) =
+/// A hover tooltip: a small "i" marker that reveals styled, multi-paragraph
+/// content. Pure CSS (no state), so it works anywhere.
+let private infoTip (paragraphs: string list) =
+    Html.span
+        [ prop.className "tip"
+          prop.children
+              [ Html.span [ prop.className "tip-icon"; prop.text "i" ]
+                Html.span
+                    [ prop.className "tip-content"
+                      prop.children (paragraphs |> List.map (fun p -> Html.p [ prop.className "tip-p"; prop.text p ])) ] ] ]
+
+let private metric (label: string) (tip: string list) (value: ReactElement) =
     Html.div
         [ prop.className "metric"
           prop.children
-              [ Html.span [ prop.className "metric-label"; prop.text label ]
+              [ Html.span
+                    [ prop.className "metric-label"
+                      prop.children [ Html.span [ prop.text label ]; infoTip tip ] ]
                 Html.span [ prop.className "metric-value"; prop.children [ value ] ] ] ]
 
 let private textValue (s: string) = Html.span [ prop.text s ]
@@ -92,6 +124,11 @@ let private summaryView (out: Pipeline.Output) =
             if s.FullyCovered then "fully covered"
             else "partial within bound"
 
+        // A partial plateau within a too-small bound is not real saturation, so
+        // only show the size when coverage is actually complete.
+        let saturationText =
+            if s.FullyCovered then optInt s.SaturationSize else "raise size"
+
         Html.div
             [ prop.className "panel"
               prop.children
@@ -99,16 +136,48 @@ let private summaryView (out: Pipeline.Output) =
                     Html.div
                         [ prop.className "summary-grid"
                           prop.children
-                              [ metric "Language" (languageBadge s.Language)
-                                metric "Min size" (textValue (optInt s.MinSize))
-                                metric "Rule coverage" (textValue (sprintf "%d / %d" s.RulesCovered s.RulesTotal))
+                              [ metric
+                                    "Language"
+                                    [ "Finite = a fixed set of strings you could list in full."
+                                      "Infinite = a loop or recursion lets strings grow without bound, e.g. a* or list ::= list ',' x."
+                                      "Empty = no finite string exists at all (rejected as a fatal error)." ]
+                                    (languageBadge s.Language)
+                                metric
+                                    "Min size"
+                                    [ "Node count of the smallest possible derivation tree: the cheapest string the grammar can make."
+                                      "Bigger means the grammar forces more structure before it can 'bottom out' to terminals." ]
+                                    (textValue (optInt s.MinSize))
+                                metric
+                                    "Rule coverage"
+                                    [ "How many useful rules have appeared in at least one sample, out of the total."
+                                      "N / N means every rule has been exercised somewhere." ]
+                                    (textValue (sprintf "%d / %d" s.RulesCovered s.RulesTotal))
                                 metric
                                     "Branch coverage"
+                                    [ "How many alternatives (every '|', including nested ones) have been taken, out of the total."
+                                      "This is the practical exhaustiveness meter: N / N means every choice has been demonstrated at least once." ]
                                     (textValue (sprintf "%d / %d" s.BranchesCovered s.BranchesTotal))
-                                metric "Saturates at size" (textValue (optInt s.SaturationSize))
-                                metric "Coverage" (textValue coverageNote)
-                                metric "Max loop reps" (textValue (string s.MaxLoopReps))
-                                metric "Max recursion depth" (textValue (string s.MaxRecursionDepth)) ] ] ] ]
+                                metric
+                                    "Saturates at size"
+                                    [ "The smallest size bound at which coverage stops growing."
+                                      "Past this point, raising the slider yields more and longer samples but no new rules or branches: you've structurally seen everything."
+                                      "Shows 'raise size' while coverage is still partial: some branches need a bigger bound than the slider currently allows." ]
+                                    (textValue saturationText)
+                                metric
+                                    "Coverage"
+                                    [ "Fully covered = every rule and branch within reach was hit."
+                                      "Partial within bound = some rules/branches need a larger size than the current slider allows." ]
+                                    (textValue coverageNote)
+                                metric
+                                    "Max loop reps"
+                                    [ "The most times any single * or + loop repeated in a sample."
+                                      "0 = loops were always skipped; 2+ = the generator actually entered loops instead of bailing at the first exit." ]
+                                    (textValue (string s.MaxLoopReps))
+                                metric
+                                    "Max recursion depth"
+                                    [ "The deepest a single rule nested inside itself across all samples."
+                                      "1 = no recursion exercised; 2+ = recursive structure was explored, e.g. nested parentheses." ]
+                                    (textValue (string s.MaxRecursionDepth)) ] ] ] ]
 
 let private diagnosticsView (out: Pipeline.Output) =
     let items =
@@ -146,11 +215,26 @@ let private samplesView (out: Pipeline.Output) =
             Html.div
                 [ prop.className "samples-meta"
                   prop.children
-                      [ Html.span [ prop.text (sprintf "%d distinct sample(s)" out.DistinctCount) ]
+                      [ Html.span
+                            [ prop.className "metric-label"
+                              prop.children
+                                  [ Html.span [ prop.text (sprintf "%d distinct sample(s)" out.DistinctCount) ]
+                                    infoTip
+                                        [ "Distinct rendered strings among all derivations with tree size <= the current bound."
+                                          "Different derivations can render to the same string (that is what ambiguity is); those duplicates are merged here and flagged 'ambiguous'." ] ] ]
                         if out.Truncated then
                             Html.span [ prop.className "badge badge-warn"; prop.text "truncated" ]
                         if out.Ambiguous then
                             Html.span [ prop.className "badge badge-info"; prop.text "ambiguous" ] ] ]
+
+    let columns =
+        Html.div
+            [ prop.className "sample sample-head"
+              prop.children
+                  [ Html.span
+                        [ prop.className "sample-size metric-label"
+                          prop.children [ Html.span [ prop.text "size" ]; infoTip [ "Derivation-tree node count for this sample. This is NOT a line number and NOT string length."; "Values can skip (some sizes are unreachable) and repeat (different strings can share a size). Samples are sorted smallest-first." ] ] ]
+                    Html.span [ prop.className "sample-text muted"; prop.text "sample" ] ] ]
 
     let rows =
         out.Samples
@@ -168,7 +252,7 @@ let private samplesView (out: Pipeline.Output) =
           prop.children
               [ Html.h2 [ prop.text "Samples" ]
                 header
-                Html.div [ prop.className "sample-list"; prop.children rows ] ] ]
+                Html.div [ prop.className "sample-list"; prop.children (columns :: rows) ] ] ]
 
 let private view (model: Model) (dispatch: Msg -> unit) =
     Html.div
@@ -188,7 +272,21 @@ let private view (model: Model) (dispatch: Msg -> unit) =
                           [ Html.div
                                 [ prop.className "panel editor"
                                   prop.children
-                                      [ Html.h2 [ prop.text "Grammar" ]
+                                      [ Html.div
+                                            [ prop.className "editor-head"
+                                              prop.children
+                                                  [ Html.h2 [ prop.text "Grammar" ]
+                                                    Html.select
+                                                        [ prop.className "preset-select"
+                                                          prop.value ""
+                                                          prop.onChange (fun (name: string) ->
+                                                              presets
+                                                              |> List.tryFind (fun (n, _) -> n = name)
+                                                              |> Option.iter (fun (_, src) -> dispatch (SetSource src)))
+                                                          prop.children
+                                                              [ Html.option [ prop.value ""; prop.text "Load a preset..." ]
+                                                                for (name, _) in presets do
+                                                                    Html.option [ prop.value name; prop.text name ] ] ] ] ]
                                         Html.textarea
                                             [ prop.className "grammar-input"
                                               prop.value model.Source
@@ -198,7 +296,13 @@ let private view (model: Model) (dispatch: Msg -> unit) =
                                               prop.children
                                                   [ Html.label
                                                         [ prop.htmlFor "size"
-                                                          prop.text (sprintf "Max derivation size (tree nodes): %d" model.MaxSize) ]
+                                                          prop.className "metric-label"
+                                                          prop.children
+                                                              [ Html.span [ prop.text (sprintf "Max derivation size (tree nodes): %d" model.MaxSize) ]
+                                                                infoTip
+                                                                    [ "Bounds the number of nodes in each derivation tree. It is NOT string length."
+                                                                      "Every rule expansion and every loop repetition costs at least one node, so a finite budget guarantees the search terminates (even with left recursion)."
+                                                                      "Raise it to explore deeper and longer derivations; watch the coverage and saturation numbers respond." ] ] ]
                                                     Html.input
                                                         [ prop.id "size"
                                                           prop.type' "range"

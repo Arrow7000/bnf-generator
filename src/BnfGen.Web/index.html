@@ -117,7 +117,7 @@
         border-radius: 6px;
         background: var(--panel-2);
       }
-      .metric-label { color: var(--muted); font-size: 0.85rem; }
+      .metric-label { color: var(--muted); font-size: 0.85rem; display: inline-flex; align-items: center; gap: 2px; }
       .metric-value { font-family: var(--mono); font-size: 0.9rem; }
       .badge-ok { background: rgba(120, 220, 150, 0.15); color: #78dc96; }
       .badge-error { background: rgba(255, 107, 107, 0.15); color: var(--error); }
@@ -132,6 +132,67 @@
         color: var(--muted);
         background: rgba(255,255,255,0.04);
       }
+
+      /* Tooltips */
+      .tip { position: relative; display: inline-flex; align-items: center; }
+      .tip-icon {
+        cursor: help;
+        margin-left: 5px;
+        width: 14px; height: 14px;
+        border: 1px solid var(--border);
+        border-radius: 50%;
+        color: var(--muted);
+        font-size: 9px;
+        font-style: italic;
+        font-family: Georgia, serif;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+        user-select: none;
+      }
+      .tip-content {
+        visibility: hidden;
+        opacity: 0;
+        position: absolute;
+        z-index: 20;
+        bottom: 150%;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 280px;
+        max-width: 70vw;
+        background: #0b0d13;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 0.8rem;
+        font-weight: normal;
+        text-transform: none;
+        letter-spacing: normal;
+        color: var(--text);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        transition: opacity 0.12s ease;
+        text-align: left;
+        line-height: 1.5;
+      }
+      .tip:hover .tip-content { visibility: visible; opacity: 1; }
+      .tip-p { margin: 0 0 6px; }
+      .tip-p:last-child { margin-bottom: 0; }
+
+      .editor-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+      .editor-head h2 { margin: 0; }
+      .preset-select {
+        background: var(--panel-2);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 5px 8px;
+        font-size: 0.82rem;
+      }
+      .preset-select:focus { outline: none; border-color: var(--accent); }
+
+      .sample-head { border-bottom: 1px solid var(--border); margin-bottom: 2px; }
+      .sample-head .sample-size { color: var(--muted); }
 
       .samples-meta { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; color: var(--muted); font-size: 0.9rem; }
       .badge { font-size: 0.72rem; padding: 2px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.03em; }
