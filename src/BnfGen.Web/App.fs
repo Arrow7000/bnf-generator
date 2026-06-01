@@ -35,28 +35,51 @@ let private presets : (string * string) list =
 
 let private displayLimit = 200
 
+// The rep/depth sliders treat their maximum as "unlimited".
+let private repSliderMax = 8
+let private depthSliderMax = 8
+
 type Model =
     { Source: string
       MaxSize: int
+      ShowAdvanced: bool
+      RepLimit: int
+      DepthLimit: int
       Output: Pipeline.Output }
 
 type Msg =
     | SetSource of string
     | SetSize of int
+    | ToggleAdvanced
+    | SetReps of int
+    | SetDepth of int
+
+let private filtersOf (m: Model) : Pipeline.Filters =
+    if not m.ShowAdvanced then
+        Pipeline.noFilters
+    else
+        { MaxReps = (if m.RepLimit >= repSliderMax then None else Some m.RepLimit)
+          MaxDepth = (if m.DepthLimit >= depthSliderMax then None else Some m.DepthLimit) }
 
 let private regenerate (model: Model) : Model =
-    { model with Output = Pipeline.generate model.Source model.MaxSize displayLimit }
+    { model with Output = Pipeline.generateWith (filtersOf model) model.Source model.MaxSize displayLimit }
 
 let private init () : Model =
     regenerate
         { Source = sampleGrammar
           MaxSize = 18
+          ShowAdvanced = false
+          RepLimit = repSliderMax
+          DepthLimit = depthSliderMax
           Output = Pipeline.generate "" 0 0 }
 
 let private update (msg: Msg) (model: Model) : Model =
     match msg with
     | SetSource s -> regenerate { model with Source = s }
     | SetSize n -> regenerate { model with MaxSize = n }
+    | ToggleAdvanced -> regenerate { model with ShowAdvanced = not model.ShowAdvanced }
+    | SetReps n -> regenerate { model with RepLimit = n }
+    | SetDepth n -> regenerate { model with DepthLimit = n }
 
 // ---------------------------------------------------------------------------
 // View
@@ -177,7 +200,84 @@ let private summaryView (out: Pipeline.Output) =
                                     "Max recursion depth"
                                     [ "The deepest a single rule nested inside itself across all samples."
                                       "1 = no recursion exercised; 2+ = recursive structure was explored, e.g. nested parentheses." ]
-                                    (textValue (string s.MaxRecursionDepth)) ] ] ] ]
+                                    (textValue (string s.MaxRecursionDepth))
+                                metric
+                                    "Minimal cover"
+                                    [ "The smallest set of samples that together hit every rule and branch (greedy set-cover)."
+                                      "This is exhaustiveness as a handful of examples rather than a flood: those samples are starred in the list below." ]
+                                    (textValue (sprintf "%d sample(s)" s.MinimalCoverSize)) ] ] ] ]
+
+let private coverageBar (label: string) (covered: int) (total: int) =
+    let pct =
+        if total = 0 then 0.0 else float covered / float total * 100.0
+
+    Html.div
+        [ prop.className "cov-row"
+          prop.children
+              [ Html.span [ prop.className "cov-label"; prop.text (sprintf "%s %d / %d" label covered total) ]
+                Html.div
+                    [ prop.className "cov-track"
+                      prop.children
+                          [ Html.div [ prop.className "cov-fill"; prop.style [ style.width (length.percent pct) ] ] ] ] ] ]
+
+/// A small line chart of cumulative distinct samples vs size, with a dashed
+/// marker at the saturation size.
+let private growthChart (points: (int * int) list) (saturation: int option) =
+    match points with
+    | []
+    | [ _ ] -> Html.p [ prop.className "muted"; prop.text "Not enough data to plot growth." ]
+    | _ ->
+        let w, h = 240.0, 70.0
+        let xs = points |> List.map (fst >> float)
+        let minX, maxX = List.min xs, List.max xs
+        let maxY = points |> List.map (snd >> float) |> List.max |> max 1.0
+        let sx x = if maxX = minX then 0.0 else (x - minX) / (maxX - minX) * w
+        let sy y = h - (y / maxY) * h
+
+        let pointStr =
+            points
+            |> List.map (fun (x, y) -> sprintf "%.1f,%.1f" (sx (float x)) (sy (float y)))
+            |> String.concat " "
+
+        let satLine =
+            match saturation with
+            | Some s when float s >= minX && float s <= maxX ->
+                let x = sx (float s)
+                [ Svg.line
+                      [ svg.x1 x
+                        svg.y1 0.0
+                        svg.x2 x
+                        svg.y2 h
+                        svg.stroke "#ffb454"
+                        svg.strokeWidth 1.0
+                        svg.strokeDasharray [| 3; 3 |] ] ]
+            | _ -> []
+
+        Svg.svg
+            [ svg.viewBox (0, 0, int w, int h)
+              svg.className "growth-svg"
+              svg.children (satLine @ [ Svg.polyline [ svg.points pointStr; svg.fill "none"; svg.stroke "#6ea8fe"; svg.strokeWidth 1.5 ] ]) ]
+
+let private explorationView (out: Pipeline.Output) =
+    match out.Summary with
+    | None -> Html.none
+    | Some s ->
+        Html.div
+            [ prop.className "panel"
+              prop.children
+                  [ Html.div
+                        [ prop.className "metric-label"
+                          prop.children
+                              [ Html.h2 [ prop.text "Coverage and growth" ]
+                                infoTip
+                                    [ "The bars show how much of the grammar the current samples exercise."
+                                      "The curve shows how the number of distinct samples grows with the size bound; the dashed line marks the saturation size, after which the count keeps climbing but coverage does not." ] ] ]
+                    coverageBar "Rules" s.RulesCovered s.RulesTotal
+                    coverageBar "Branches" s.BranchesCovered s.BranchesTotal
+                    Html.div [ prop.className "chart-wrap"; prop.children [ growthChart s.Growth s.SaturationSize ] ]
+                    Html.p
+                        [ prop.className "chart-caption"
+                          prop.text "distinct samples (y) vs derivation size (x); dashed = saturation" ] ] ]
 
 let private diagnosticsView (out: Pipeline.Output) =
     let items =
@@ -236,16 +336,33 @@ let private samplesView (out: Pipeline.Output) =
                           prop.children [ Html.span [ prop.text "size" ]; infoTip [ "Derivation-tree node count for this sample. This is NOT a line number and NOT string length."; "Values can skip (some sizes are unreachable) and repeat (different strings can share a size). Samples are sorted smallest-first." ] ] ]
                     Html.span [ prop.className "sample-text muted"; prop.text "sample" ] ] ]
 
+    let renderSegments (segs: Render.Segment list) =
+        if List.isEmpty segs then
+            [ Html.span [ prop.className "muted"; prop.text "(empty string)" ] ]
+        else
+            segs
+            |> List.map (fun seg ->
+                match seg with
+                | Render.TextSeg t -> Html.span [ prop.text t ]
+                | Render.ClassSeg (rep, label) ->
+                    Html.span
+                        [ prop.className "class-rep"
+                          prop.title (sprintf "%s class - one representative member shown" label)
+                          prop.text rep ])
+
     let rows =
         out.Samples
         |> List.map (fun s ->
             Html.div
-                [ prop.className "sample"
+                [ prop.className (if s.InMinimalCover then "sample sample-cover" else "sample")
                   prop.children
                       [ Html.span [ prop.className "sample-size"; prop.text (string s.Size) ]
-                        Html.code
-                            [ prop.className "sample-text"
-                              prop.text (if s.Text = "" then "(empty string)" else s.Text) ] ] ])
+                        Html.code [ prop.className "sample-text"; prop.children (renderSegments s.Segments) ]
+                        if s.InMinimalCover then
+                            Html.span
+                                [ prop.className "cover-chip"
+                                  prop.title "Part of the minimal covering set"
+                                  prop.text "cover" ] ] ])
 
     Html.div
         [ prop.className "panel"
@@ -309,12 +426,54 @@ let private view (model: Model) (dispatch: Msg -> unit) =
                                                           prop.min 1
                                                           prop.max 40
                                                           prop.value model.MaxSize
-                                                          prop.onChange (fun (v: string) ->
-                                                              dispatch (SetSize(int v))) ] ] ] ] ]
+                                                          prop.onChange (fun (v: string) -> dispatch (SetSize(int v))) ]
+                                                    Html.button
+                                                        [ prop.className "advanced-toggle"
+                                                          prop.onClick (fun _ -> dispatch ToggleAdvanced)
+                                                          prop.text (if model.ShowAdvanced then "Hide full control" else "Full control") ]
+                                                    if model.ShowAdvanced then
+                                                        Html.div
+                                                            [ prop.className "advanced"
+                                                              prop.children
+                                                                  [ Html.label
+                                                                        [ prop.className "metric-label"
+                                                                          prop.children
+                                                                              [ Html.span
+                                                                                    [ prop.text (
+                                                                                          if model.RepLimit >= repSliderMax then "Max loop reps: none"
+                                                                                          else sprintf "Max loop reps: %d" model.RepLimit
+                                                                                      ) ]
+                                                                                infoTip
+                                                                                    [ "Width control: caps how many times any * or + loop may repeat."
+                                                                                      "Lower it to keep samples short and wide-but-shallow; at the maximum it is unconstrained." ] ] ]
+                                                                    Html.input
+                                                                        [ prop.type' "range"
+                                                                          prop.min 0
+                                                                          prop.max repSliderMax
+                                                                          prop.value model.RepLimit
+                                                                          prop.onChange (fun (v: string) -> dispatch (SetReps(int v))) ]
+                                                                    Html.label
+                                                                        [ prop.className "metric-label"
+                                                                          prop.children
+                                                                              [ Html.span
+                                                                                    [ prop.text (
+                                                                                          if model.DepthLimit >= depthSliderMax then "Max recursion depth: none"
+                                                                                          else sprintf "Max recursion depth: %d" model.DepthLimit
+                                                                                      ) ]
+                                                                                infoTip
+                                                                                    [ "Depth control: caps how deeply any single rule may nest inside itself."
+                                                                                      "Lower it to keep recursion shallow; at the maximum it is unconstrained." ] ] ]
+                                                                    Html.input
+                                                                        [ prop.type' "range"
+                                                                          prop.min 1
+                                                                          prop.max depthSliderMax
+                                                                          prop.value model.DepthLimit
+                                                                          prop.onChange (fun (v: string) -> dispatch (SetDepth(int v))) ] ] ] ] ] ] ]
                             Html.div
                                 [ prop.className "results"
                                   prop.children
                                       [ summaryView model.Output
+                                        explorationView model.Output
                                         diagnosticsView model.Output
                                         samplesView model.Output ] ] ] ] ] ]
 

@@ -215,7 +215,50 @@
         min-width: 2.2em;
         text-align: right;
       }
-      .sample-text { font-family: var(--mono); font-size: 0.92rem; word-break: break-all; }
+      .sample-text { font-family: var(--mono); font-size: 0.92rem; word-break: break-all; flex: 1; }
+      .sample-cover { background: rgba(110,168,254,0.10) !important; box-shadow: inset 2px 0 0 var(--accent); }
+      .cover-chip {
+        font-size: 0.62rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 1px 6px;
+        border-radius: 999px;
+        background: rgba(110,168,254,0.18);
+        color: var(--accent);
+        white-space: nowrap;
+      }
+      .class-rep {
+        background: rgba(255,180,84,0.18);
+        color: var(--warn);
+        border-bottom: 1px dashed var(--warn);
+        border-radius: 2px;
+        cursor: help;
+      }
+
+      /* Advanced controls */
+      .advanced-toggle {
+        margin-top: 12px;
+        background: var(--panel-2);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 5px 10px;
+        font-size: 0.8rem;
+        cursor: pointer;
+      }
+      .advanced-toggle:hover { border-color: var(--accent); }
+      .advanced { margin-top: 12px; display: flex; flex-direction: column; gap: 4px; }
+      .advanced label { margin-top: 6px; font-size: 0.85rem; color: var(--muted); }
+      .advanced input[type="range"] { width: 100%; accent-color: var(--accent); }
+
+      /* Coverage bars + growth chart */
+      .cov-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+      .cov-label { font-size: 0.82rem; color: var(--muted); min-width: 120px; font-family: var(--mono); }
+      .cov-track { flex: 1; height: 8px; background: var(--panel-2); border-radius: 999px; overflow: hidden; }
+      .cov-fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.15s ease; }
+      .chart-wrap { margin-top: 8px; }
+      .growth-svg { width: 100%; height: 80px; display: block; }
+      .chart-caption { color: var(--muted); font-size: 0.75rem; margin: 4px 0 0; text-align: center; }
     </style>
   </head>
   <body>
