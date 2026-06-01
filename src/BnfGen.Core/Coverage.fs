@@ -57,26 +57,134 @@ module Coverage =
         | _ -> false
 
     /// All coverage targets (rule + branch tokens) for the useful rules.
-    let targets (g: Grammar) (useful: Set<string>) : Set<string> =
+    /// Branches that can never complete a finite derivation (non-productive
+    /// sub-expressions) are excluded, since they are not coverable.
+    let targets (g: Grammar) (useful: Set<string>) (productive: Set<string>) : Set<string> =
         let rec branchTokensOf (rule: string) (path: int list) (e: Expr) : string list =
-            match e with
-            | Alt bs ->
-                let here = bs |> List.mapi (fun i _ -> branchToken rule path i)
-                let nested = bs |> List.mapi (fun i b -> branchTokensOf rule (i :: path) b) |> List.concat
-                here @ nested
-            | Seq xs -> xs |> List.mapi (fun i x -> branchTokensOf rule (i :: path) x) |> List.concat
-            | Opt x
-            | Star x
-            | Plus x -> branchTokensOf rule (0 :: path) x
-            | NonTerminal _
-            | Terminal _
-            | CharClass _
-            | Epsilon -> []
+            if not (Analysis.exprProductive productive e) then
+                []
+            else
+                match e with
+                | Alt bs ->
+                    let productiveBranches =
+                        bs
+                        |> List.mapi (fun i b -> i, b)
+                        |> List.filter (fun (_, b) -> Analysis.exprProductive productive b)
+
+                    let here = productiveBranches |> List.map (fun (i, _) -> branchToken rule path i)
+
+                    let nested =
+                        productiveBranches |> List.collect (fun (i, b) -> branchTokensOf rule (i :: path) b)
+
+                    here @ nested
+                | Seq xs -> xs |> List.mapi (fun i x -> branchTokensOf rule (i :: path) x) |> List.concat
+                | Opt x
+                | Star x
+                | Plus x -> branchTokensOf rule (0 :: path) x
+                | NonTerminal _
+                | Terminal _
+                | CharClass _
+                | Epsilon -> []
 
         g.Rules
         |> List.filter (fun r -> Set.contains r.Name useful)
         |> List.collect (fun r -> ruleToken r.Name :: branchTokensOf r.Name [] r.Body)
         |> Set.ofList
+
+    /// The size at which coverage saturates, computed statically (independent of
+    /// any size bound): the smallest bound at which every coverable rule and
+    /// branch has at least one derivation. Equals the max over all targets of
+    /// the minimum derivation size that exercises that target.
+    let saturationSize
+        (g: Grammar)
+        (productive: Set<string>)
+        (reachable: Set<string>)
+        (minCost: Map<string, int>)
+        : int option =
+        let useful = Set.intersect productive reachable |> Set.toList
+        let INF = Analysis.inf
+        let costExpr e = Analysis.costOfExpr minCost e
+
+        // Min added size to expand `e` while leaving one direct occurrence of
+        // nonterminal `b` as a hole, expanding everything else minimally.
+        let rec routeExpr (e: Expr) (b: string) : int =
+            match e with
+            | NonTerminal c -> if c = b then 0 else INF
+            | Terminal _
+            | CharClass _
+            | Epsilon -> INF
+            | Opt x -> routeExpr x b
+            | Star x
+            | Plus x ->
+                let r = routeExpr x b
+                if r >= INF then INF else 1 + r
+            | Alt xs -> xs |> List.map (fun x -> routeExpr x b) |> List.min
+            | Seq xs ->
+                let costs = xs |> List.map costExpr
+                let total = costs |> List.fold (fun a c -> if a >= INF || c >= INF then INF else a + c) 0
+                let mutable best = INF
+
+                xs
+                |> List.iteri (fun j xj ->
+                    let rj = routeExpr xj b
+
+                    if rj < INF && total < INF then
+                        let cand = 1 + rj + (total - List.item j costs)
+                        if cand < best then best <- cand)
+
+                best
+
+        let routeCost (a: string) (b: string) : int =
+            match Map.tryFind a g.RuleMap with
+            | Some body ->
+                let r = routeExpr body b
+                if r >= INF then INF else 1 + r
+            | None -> INF
+
+        // contextMin[n] = min size of a start-derivation hosting an n-hole (the
+        // hole excludes n's own rule node). Bellman-Ford; edge weights >= 0.
+        let edges =
+            [ for a in useful do
+                  for b in useful do
+                      let w = routeCost a b
+                      if w < INF then yield (a, b, w) ]
+
+        let mutable dist =
+            useful |> List.map (fun n -> n, (if n = g.Start then 0 else INF)) |> Map.ofList
+
+        let mutable changed = true
+
+        while changed do
+            changed <- false
+
+            for (a, b, w) in edges do
+                if dist.[a] < INF && dist.[a] + w < dist.[b] then
+                    dist <- Map.add b (dist.[a] + w) dist
+                    changed <- true
+
+        // For each coverable branch: cover size = context to host R + R's rule
+        // node + the branch body's minimum size.
+        let coverSizes =
+            useful
+            |> List.collect (fun r ->
+                let branches =
+                    match Map.tryFind r g.RuleMap with
+                    | Some (Alt bs) -> bs
+                    | Some body -> [ body ]
+                    | None -> []
+
+                branches
+                |> List.filter (Analysis.exprProductive productive)
+                |> List.map (fun branchExpr ->
+                    let d = dist.[r]
+                    let cb = costExpr branchExpr
+                    if d >= INF || cb >= INF then INF else d + 1 + cb))
+
+        match coverSizes with
+        | [] -> None
+        | _ ->
+            let m = List.max coverSizes
+            if m >= INF then None else Some m
 
     /// Count tokens of a given kind ("R:" rules, "B:" branches).
     let countKind (prefix: string) (tokens: Set<string>) : int =

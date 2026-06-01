@@ -122,18 +122,20 @@ module Pipeline =
                 let filtered = withInfo |> List.filter (fun (_, _, info) -> passes info)
 
                 // Deduplicate by rendered string, keeping the first derivation.
+                // Class members are varied deterministically by hashing the node.
                 let distinctRev, _, ambiguous =
                     filtered
                     |> List.fold
                         (fun (acc, seen, amb) (node, size, info: Coverage.DerivInfo) ->
-                            let text = Render.render opts node
+                            let segments = Render.renderSegments (hash node) opts node
+                            let text = Render.segmentText segments
 
                             if Set.contains text seen then
                                 (acc, seen, true)
                             else
                                 let entry =
                                     {| Text = text
-                                       Segments = Render.renderSegments opts node
+                                       Segments = segments
                                        Size = size
                                        Rules = Render.rulesUsed node
                                        Tokens = info.Tokens |}
@@ -144,9 +146,10 @@ module Pipeline =
                 let distinct = List.rev distinctRev
                 let distinctCount = List.length distinct
 
-                // Coverage.
+                // Coverage. Totals and saturation are STATIC properties of the
+                // grammar; covered counts are dynamic (depend on the bound/filters).
                 let useful = Set.intersect report.Productive report.Reachable
-                let targets = Coverage.targets grammar useful
+                let targets = Coverage.targets grammar useful report.Productive
                 let coveredAll = distinct |> List.fold (fun acc e -> Set.union acc e.Tokens) Set.empty
                 let rulesTotal = Coverage.countKind "R:" targets
                 let branchesTotal = Coverage.countKind "B:" targets
@@ -158,29 +161,18 @@ module Pipeline =
                     && rulesCovered = rulesTotal
                     && branchesCovered = branchesTotal
 
+                // Static: smallest derivation size the grammar admits at all.
                 let minSize =
-                    match distinct with
-                    | [] -> None
-                    | _ -> Some(distinct |> List.map (fun e -> e.Size) |> List.min)
+                    match Map.tryFind grammar.Start report.MinCost with
+                    | Some v -> Some(1 + v)
+                    | None -> None
+
+                // Static: where coverage saturates, regardless of the slider.
+                let saturation =
+                    Coverage.saturationSize grammar report.Productive report.Reachable report.MinCost
 
                 let maxReps = filtered |> List.fold (fun m (_, _, i: Coverage.DerivInfo) -> max m i.MaxReps) 0
                 let maxDepth = filtered |> List.fold (fun m (_, _, i: Coverage.DerivInfo) -> max m i.MaxDepth) 0
-
-                // Saturation: smallest size at which cumulative coverage maxes.
-                let saturation =
-                    let target = Set.count coveredAll
-                    let sorted = distinct |> List.sortBy (fun e -> e.Size)
-                    let mutable cumulative = Set.empty
-                    let mutable result = None
-
-                    for e in sorted do
-                        if Option.isNone result then
-                            cumulative <- Set.union cumulative e.Tokens
-
-                            if Set.count cumulative = target && target > 0 then
-                                result <- Some e.Size
-
-                    result
 
                 // Growth curve: cumulative distinct samples by size.
                 let growth =

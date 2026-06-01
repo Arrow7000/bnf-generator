@@ -1,10 +1,14 @@
 module Tests
 
+open System.Text.RegularExpressions
 open Xunit
 open FsCheck
 open FsCheck.FSharp
 open BnfGen
 open BnfGen.Ast
+
+let private anyMatches (pattern: string) (ts: Set<string>) =
+    ts |> Set.exists (fun t -> Regex.IsMatch(t, pattern))
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -85,10 +89,11 @@ let ``arithmetic grammar explores loops and recursion`` () =
     let out = gen src 18
     let ts = texts out
     Assert.False(out.Fatal, messages out)
-    Assert.Contains("0", ts)
-    Assert.Contains("0+0", ts)
-    Assert.Contains("0*0", ts)
-    Assert.Contains("(0)", ts)
+    // Char-class members vary, so match shapes rather than exact digits.
+    Assert.True(anyMatches @"^[0-9]$" ts, "a bare digit")
+    Assert.True(anyMatches @"^[0-9]\+[0-9]$" ts, "digit + digit")
+    Assert.True(anyMatches @"^[0-9]\*[0-9]$" ts, "digit * digit")
+    Assert.True(anyMatches @"^\([0-9]\)$" ts, "parenthesised digit")
 
 [<Fact>]
 let ``left-recursive grammar terminates and is flagged`` () =
@@ -127,9 +132,11 @@ let ``unreachable rule is warned but not fatal`` () =
     Assert.Contains("unreachable", messages out)
 
 [<Fact>]
-let ``character class renders a representative character`` () =
+let ``character class renders a single member`` () =
     let out = gen """ D ::= [0-9] """ 6
-    Assert.Equal<Set<string>>(Set.ofList [ "0" ], texts out)
+    Assert.Equal(1, out.DistinctCount)
+    let t = (List.head out.Samples).Text
+    Assert.True(Regex.IsMatch(t, @"^[0-9]$"), sprintf "expected one digit, got '%s'" t)
 
 [<Fact>]
 let ``ambiguous grammar is detected`` () =
@@ -268,6 +275,49 @@ let ``char classes render as a highlightable segment`` () =
     Assert.True(hasClassSegment)
 
 [<Fact>]
+let ``static saturation size matches the empirical one`` () =
+    // The statically computed saturation must equal the smallest size at which
+    // enumeration actually achieves full coverage.
+    let empirical src =
+        [ 1..40 ]
+        |> List.tryFind (fun n ->
+            match (gen src n).Summary with
+            | Some s -> s.FullyCovered
+            | None -> false)
+
+    let check src =
+        let staticSat =
+            match (gen src 40).Summary with
+            | Some s -> s.SaturationSize
+            | None -> None
+
+        Assert.Equal<int option>(empirical src, staticSat)
+
+    check """ greeting ::= ("hello" | "hi") " " ("world" | "there") """
+    check """ list ::= list "," "x" | "x" """
+    check """ parens ::= "(" parens ")" | "" """
+
+    check
+        """ expr ::= term ("+" term)*
+            term ::= factor ("*" factor)*
+            factor ::= [0-9] | "(" expr ")" """
+
+[<Fact>]
+let ``static saturation is independent of the size bound`` () =
+    let src = """ expr ::= term ("+" term)*
+                  term ::= factor ("*" factor)*
+                  factor ::= [0-9] | "(" expr ")" """
+
+    let satAt n =
+        match (gen src n).Summary with
+        | Some s -> s.SaturationSize
+        | None -> None
+
+    // Same answer whether the slider is below, at, or above saturation.
+    Assert.Equal<int option>(satAt 8, satAt 40)
+    Assert.Equal<int option>(satAt 18, satAt 40)
+
+[<Fact>]
 let ``growth curve is non-decreasing`` () =
     let out = gen """ list ::= list "," "x" | "x" """ 20
 
@@ -350,8 +400,9 @@ let ``every covered token is a declared coverage target`` () =
     // (no off-by-one in the path identity scheme).
     let prop =
         Prop.forAll arbGrammar (fun g ->
-            let useful = Set.intersect (Analysis.productiveSet g) (Analysis.reachableSet g)
-            let targets = Coverage.targets g useful
+            let productive = Analysis.productiveSet g
+            let useful = Set.intersect productive (Analysis.reachableSet g)
+            let targets = Coverage.targets g useful productive
 
             let covered =
                 Enumerate.enumerate g 7

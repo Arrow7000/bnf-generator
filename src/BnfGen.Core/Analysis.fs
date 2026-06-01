@@ -13,7 +13,31 @@ module Analysis =
 
     /// "Infinity" sentinel for the minimum-cost fixpoint. Divided down from
     /// Int32.MaxValue so additions can't overflow.
-    let private inf = System.Int32.MaxValue / 4
+    let inf = System.Int32.MaxValue / 4
+
+    /// Minimum derivation size (node count) of an expression, given the
+    /// minimum-cost map for nonterminals. Mirrors enumeration's size measure:
+    /// a nonterminal reference costs 1 (its rule node) plus the cost of its
+    /// body; a sequence costs 1 (its NSeq node) plus its children.
+    let costOfExpr (minCost: Map<string, int>) (e: Expr) : int =
+        let clampAdd a b = if a >= inf || b >= inf then inf else a + b
+
+        let rec cost (e: Expr) : int =
+            match e with
+            | Terminal _ -> 1
+            | CharClass _ -> 1
+            | Epsilon -> 1
+            | NonTerminal n ->
+                match Map.tryFind n minCost with
+                | Some v -> clampAdd 1 v
+                | None -> inf
+            | Seq xs -> xs |> List.fold (fun acc x -> clampAdd acc (cost x)) 1
+            | Alt xs -> xs |> List.map cost |> List.min
+            | Opt _ -> 1
+            | Star _ -> 1
+            | Plus x -> clampAdd 1 (cost x)
+
+        cost e
 
     /// Nonterminals directly referenced anywhere in an expression.
     let rec refsOf (e: Expr) : Set<string> =
@@ -106,23 +130,6 @@ module Analysis =
     /// Minimum derivation size (node count) for each nonterminal. Non-productive
     /// nonterminals are absent from the result map.
     let minCostMap (g: Grammar) : Map<string, int> =
-        let clampAdd a b = if a >= inf || b >= inf then inf else a + b
-
-        let rec cost (m: Map<string, int>) (e: Expr) : int =
-            match e with
-            | Terminal _ -> 1
-            | CharClass _ -> 1
-            | Epsilon -> 1
-            | NonTerminal n ->
-                match Map.tryFind n m with
-                | Some v -> clampAdd 1 v
-                | None -> inf
-            | Seq xs -> xs |> List.fold (fun acc x -> clampAdd acc (cost m x)) 1
-            | Alt xs -> xs |> List.map (cost m) |> List.min
-            | Opt _ -> 1
-            | Star _ -> 1
-            | Plus x -> clampAdd 1 (cost m x)
-
         let mutable m =
             g.Rules |> List.map (fun r -> r.Name, inf) |> Map.ofList
 
@@ -132,7 +139,7 @@ module Analysis =
             changed <- false
 
             for r in g.Rules do
-                let c = cost m r.Body
+                let c = costOfExpr m r.Body
 
                 if c < m.[r.Name] then
                     m <- Map.add r.Name c m
