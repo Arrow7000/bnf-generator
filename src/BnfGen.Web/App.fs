@@ -134,28 +134,27 @@ let private languageBadge (k: Ast.LanguageKind) =
 
     Html.span [ prop.className cls; prop.text txt ]
 
-let private summaryView (out: Pipeline.Output) =
+let private optInt =
+    function
+    | Some n -> string n
+    | None -> "-"
+
+/// Fixed properties of the grammar itself - these never change as you move the
+/// sliders.
+let private grammarView (out: Pipeline.Output) =
     match out.Summary with
     | None -> Html.none
     | Some s ->
-        let optInt =
-            function
-            | Some n -> string n
-            | None -> "-"
-
-        let coverageNote =
-            if s.FullyCovered then "fully covered"
-            else "partial within bound"
-
-        // A partial plateau within a too-small bound is not real saturation, so
-        // only show the size when coverage is actually complete.
-        let saturationText =
-            if s.FullyCovered then optInt s.SaturationSize else "raise size"
-
         Html.div
             [ prop.className "panel"
               prop.children
-                  [ Html.h2 [ prop.text "Grammar summary" ]
+                  [ Html.div
+                        [ prop.className "metric-label panel-head"
+                          prop.children
+                              [ Html.h2 [ prop.text "Grammar (fixed)" ]
+                                infoTip
+                                    [ "These are intrinsic properties of the grammar, computed by static analysis."
+                                      "They do not depend on the size slider or filters - moving those never changes anything here." ] ] ]
                     Html.div
                         [ prop.className "summary-grid"
                           prop.children
@@ -171,54 +170,34 @@ let private summaryView (out: Pipeline.Output) =
                                       "Bigger means the grammar forces more structure before it can 'bottom out' to terminals." ]
                                     (textValue (optInt s.MinSize))
                                 metric
-                                    "Rule coverage"
-                                    [ "How many useful rules have appeared in at least one sample, out of the total."
-                                      "N / N means every rule has been exercised somewhere." ]
-                                    (textValue (sprintf "%d / %d" s.RulesCovered s.RulesTotal))
-                                metric
-                                    "Branch coverage"
-                                    [ "How many alternatives (every '|', including nested ones) have been taken, out of the total."
-                                      "This is the practical exhaustiveness meter: N / N means every choice has been demonstrated at least once." ]
-                                    (textValue (sprintf "%d / %d" s.BranchesCovered s.BranchesTotal))
-                                metric
                                     "Saturates at size"
-                                    [ "The smallest size bound at which coverage stops growing."
-                                      "Past this point, raising the slider yields more and longer samples but no new rules or branches: you've structurally seen everything."
-                                      "Shows 'raise size' while coverage is still partial: some branches need a bigger bound than the slider currently allows." ]
-                                    (textValue saturationText)
-                                metric
-                                    "Coverage"
-                                    [ "Fully covered = every rule and branch within reach was hit."
-                                      "Partial within bound = some rules/branches need a larger size than the current slider allows." ]
-                                    (textValue coverageNote)
-                                metric
-                                    "Max loop reps"
-                                    [ "The most times any single * or + loop repeated in a sample."
-                                      "0 = loops were always skipped; 2+ = the generator actually entered loops instead of bailing at the first exit." ]
-                                    (textValue (string s.MaxLoopReps))
-                                metric
-                                    "Max recursion depth"
-                                    [ "The deepest a single rule nested inside itself across all samples."
-                                      "1 = no recursion exercised; 2+ = recursive structure was explored, e.g. nested parentheses." ]
-                                    (textValue (string s.MaxRecursionDepth))
-                                metric
-                                    "Minimal cover"
-                                    [ "The smallest set of samples that together hit every rule and branch (greedy set-cover)."
-                                      "This is exhaustiveness as a handful of examples rather than a flood: those samples are starred in the list below." ]
-                                    (textValue (sprintf "%d sample(s)" s.MinimalCoverSize)) ] ] ] ]
+                                    [ "The smallest size bound at which every rule and branch becomes reachable - the point of full coverage."
+                                      "This is a fixed property of the grammar: it can be computed without generating anything. Your slider tells you whether you've reached it yet (see 'This run')." ]
+                                    (textValue (optInt s.SaturationSize)) ] ] ] ]
 
 let private coverageBar (label: string) (covered: int) (total: int) =
     let pct =
         if total = 0 then 0.0 else float covered / float total * 100.0
 
+    let full = total > 0 && covered = total
+
     Html.div
         [ prop.className "cov-row"
           prop.children
-              [ Html.span [ prop.className "cov-label"; prop.text (sprintf "%s %d / %d" label covered total) ]
+              [ Html.span
+                    [ prop.className "cov-label"
+                      prop.children
+                          [ Html.span [ prop.text (label + " ") ]
+                            Html.span
+                                [ prop.className (if full then "cov-num cov-done" else "cov-num cov-partial")
+                                  prop.text (string covered) ]
+                            Html.span [ prop.className "metric-muted"; prop.text (sprintf " / %d" total) ] ] ]
                 Html.div
                     [ prop.className "cov-track"
                       prop.children
-                          [ Html.div [ prop.className "cov-fill"; prop.style [ style.width (length.percent pct) ] ] ] ] ] ]
+                          [ Html.div
+                                [ prop.className (if full then "cov-fill cov-fill-done" else "cov-fill")
+                                  prop.style [ style.width (length.percent pct) ] ] ] ] ] ]
 
 /// A small line chart of cumulative distinct samples vs size, with a dashed
 /// marker at the saturation size.
@@ -258,26 +237,65 @@ let private growthChart (points: (int * int) list) (saturation: int option) =
               svg.className "growth-svg"
               svg.children (satLine @ [ Svg.polyline [ svg.points pointStr; svg.fill "none"; svg.stroke "#6ea8fe"; svg.strokeWidth 1.5 ] ]) ]
 
-let private explorationView (out: Pipeline.Output) =
+/// Values that depend on your current size bound and filters.
+let private thisRunView (out: Pipeline.Output) =
     match out.Summary with
     | None -> Html.none
     | Some s ->
+        let statusValue =
+            if s.FullyCovered then
+                Html.span [ prop.className "status-done"; prop.text "fully covered" ]
+            else
+                let hint =
+                    match s.SaturationSize with
+                    | Some n -> sprintf "partial - full at size %d" n
+                    | None -> "partial"
+
+                Html.span [ prop.className "status-partial"; prop.text hint ]
+
         Html.div
             [ prop.className "panel"
               prop.children
                   [ Html.div
-                        [ prop.className "metric-label"
+                        [ prop.className "metric-label panel-head"
                           prop.children
-                              [ Html.h2 [ prop.text "Coverage and growth" ]
+                              [ Html.h2 [ prop.text "This run (your settings)" ]
                                 infoTip
-                                    [ "The bars show how much of the grammar the current samples exercise."
-                                      "The curve shows how the number of distinct samples grows with the size bound; the dashed line marks the saturation size, after which the count keeps climbing but coverage does not." ] ] ]
+                                    [ "These values reflect what your current size bound and filters actually produced."
+                                      "Move the size slider or the width/depth filters and watch them respond." ] ] ]
+                    Html.div
+                        [ prop.className "summary-grid"
+                          prop.children
+                              [ metric
+                                    "Distinct samples"
+                                    [ "Distinct rendered strings produced at the current settings." ]
+                                    (textValue (string out.DistinctCount))
+                                metric
+                                    "Coverage"
+                                    [ "Whether the current size bound is enough to exercise every rule and branch."
+                                      "If partial, raise the size to the saturation point shown under 'Grammar (fixed)'." ]
+                                    statusValue
+                                metric
+                                    "Max loop reps"
+                                    [ "The most times any single * or + loop repeated in a sample so far."
+                                      "0 = loops were always skipped; 2+ = the generator entered loops rather than bailing at the first exit." ]
+                                    (textValue (string s.MaxLoopReps))
+                                metric
+                                    "Max recursion depth"
+                                    [ "The deepest a single rule nested inside itself so far."
+                                      "1 = no recursion exercised; 2+ = recursive structure was explored, e.g. nested parentheses." ]
+                                    (textValue (string s.MaxRecursionDepth))
+                                metric
+                                    "Minimal cover"
+                                    [ "The smallest set of samples that together hit every rule and branch reached so far (greedy set-cover)."
+                                      "Exhaustiveness as a handful of examples rather than a flood: these samples are starred in the list below." ]
+                                    (textValue (sprintf "%d sample(s)" s.MinimalCoverSize)) ] ]
                     coverageBar "Rules" s.RulesCovered s.RulesTotal
                     coverageBar "Branches" s.BranchesCovered s.BranchesTotal
                     Html.div [ prop.className "chart-wrap"; prop.children [ growthChart s.Growth s.SaturationSize ] ]
                     Html.p
                         [ prop.className "chart-caption"
-                          prop.text "distinct samples (y) vs derivation size (x); dashed = saturation" ] ] ]
+                          prop.text "distinct samples (y) vs derivation size (x); dashed line = saturation" ] ] ]
 
 let private diagnosticsView (out: Pipeline.Output) =
     let items =
@@ -345,10 +363,18 @@ let private samplesView (out: Pipeline.Output) =
                 match seg with
                 | Render.TextSeg t -> Html.span [ prop.text t ]
                 | Render.ClassSeg (rep, label) ->
+                    // Custom (instant) tooltip rather than the native title,
+                    // which has a long hover delay.
                     Html.span
-                        [ prop.className "class-rep"
-                          prop.title (sprintf "%s class - one representative member shown" label)
-                          prop.text rep ])
+                        [ prop.className "class-rep tip"
+                          prop.children
+                              [ Html.span [ prop.text rep ]
+                                Html.span
+                                    [ prop.className "tip-content tip-content-sm"
+                                      prop.children
+                                          [ Html.p
+                                                [ prop.className "tip-p"
+                                                  prop.text (sprintf "%s class - one member shown; the class is not exhausted." label) ] ] ] ] ])
 
     let rows =
         out.Samples
@@ -369,7 +395,8 @@ let private samplesView (out: Pipeline.Output) =
           prop.children
               [ Html.h2 [ prop.text "Samples" ]
                 header
-                Html.div [ prop.className "sample-list"; prop.children (columns :: rows) ] ] ]
+                columns
+                Html.div [ prop.className "sample-list"; prop.children rows ] ] ]
 
 let private view (model: Model) (dispatch: Msg -> unit) =
     Html.div
@@ -393,15 +420,25 @@ let private view (model: Model) (dispatch: Msg -> unit) =
                                             [ prop.className "editor-head"
                                               prop.children
                                                   [ Html.h2 [ prop.text "Grammar" ]
+                                                    let currentPreset =
+                                                        presets
+                                                        |> List.tryFind (fun (_, src) -> src = model.Source)
+                                                        |> Option.map fst
+
                                                     Html.select
                                                         [ prop.className "preset-select"
-                                                          prop.value ""
+                                                          prop.value (defaultArg currentPreset "")
                                                           prop.onChange (fun (name: string) ->
                                                               presets
                                                               |> List.tryFind (fun (n, _) -> n = name)
                                                               |> Option.iter (fun (_, src) -> dispatch (SetSource src)))
                                                           prop.children
-                                                              [ Html.option [ prop.value ""; prop.text "Load a preset..." ]
+                                                              [ Html.option
+                                                                    [ prop.value ""
+                                                                      prop.text (
+                                                                          if Option.isSome currentPreset then "Load a preset..."
+                                                                          else "Custom grammar"
+                                                                      ) ]
                                                                 for (name, _) in presets do
                                                                     Html.option [ prop.value name; prop.text name ] ] ] ] ]
                                         Html.textarea
@@ -472,8 +509,8 @@ let private view (model: Model) (dispatch: Msg -> unit) =
                             Html.div
                                 [ prop.className "results"
                                   prop.children
-                                      [ summaryView model.Output
-                                        explorationView model.Output
+                                      [ grammarView model.Output
+                                        thisRunView model.Output
                                         diagnosticsView model.Output
                                         samplesView model.Output ] ] ] ] ] ]
 

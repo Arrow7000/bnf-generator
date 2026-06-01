@@ -179,8 +179,10 @@
       .tip-p { margin: 0 0 6px; }
       .tip-p:last-child { margin-bottom: 0; }
 
-      .editor-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+      .editor-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 12px; }
       .editor-head h2 { margin: 0; }
+      .panel-head { margin-bottom: 12px; }
+      .panel-head h2 { margin: 0; }
       .preset-select {
         background: var(--panel-2);
         color: var(--text);
@@ -199,7 +201,7 @@
       .badge-warn { background: rgba(255,180,84,0.15); color: var(--warn); }
       .badge-info { background: rgba(110,168,254,0.15); color: var(--info); }
 
-      .sample-list { display: flex; flex-direction: column; gap: 4px; max-height: 60vh; overflow: auto; }
+      .sample-list { display: flex; flex-direction: column; gap: 4px; }
       .sample {
         display: flex;
         gap: 12px;
@@ -234,6 +236,16 @@
         border-radius: 2px;
         cursor: help;
       }
+      .tip-content-sm { width: 220px; }
+
+      /* Coverage numbers + run status */
+      .metric-muted { color: var(--muted); }
+      .cov-num { font-weight: 600; }
+      .cov-done { color: #78dc96; }
+      .cov-partial { color: var(--accent); }
+      .cov-fill-done { background: #78dc96; }
+      .status-done { color: #78dc96; }
+      .status-partial { color: var(--warn); }
 
       /* Advanced controls */
       .advanced-toggle {
