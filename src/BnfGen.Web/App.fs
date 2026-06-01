@@ -140,14 +140,34 @@ let private metric (label: string) (tip: string list) (value: ReactElement) =
 
 let private textValue (s: string) = Html.span [ prop.text s ]
 
-let private languageBadge (k: Ast.LanguageKind) =
-    let cls, txt =
-        match k with
-        | Ast.Empty -> "badge badge-error", "empty"
-        | Ast.Finite -> "badge badge-ok", "finite"
-        | Ast.Infinite -> "badge badge-info", "infinite"
+/// A badge that carries its own hover tooltip, so it is understandable on its
+/// own without hunting for an info icon elsewhere.
+let private badgeTip (cls: string) (label: string) (paragraphs: string list) =
+    Html.span
+        [ prop.className (cls + " tip")
+          prop.children
+              [ Html.span [ prop.text label ]
+                Html.span
+                    [ prop.className "tip-content tip-content-sm"
+                      prop.children (paragraphs |> List.map (fun p -> Html.p [ prop.className "tip-p"; prop.text p ])) ] ] ]
 
-    Html.span [ prop.className cls; prop.text txt ]
+let private languageBadge (k: Ast.LanguageKind) =
+    match k with
+    | Ast.Empty ->
+        badgeTip
+            "badge badge-error"
+            "empty"
+            [ "No finite string exists: the grammar only admits infinitely long strings (or nothing). It is rejected as a fatal error." ]
+    | Ast.Finite ->
+        badgeTip
+            "badge badge-ok"
+            "finite"
+            [ "The grammar generates a fixed, finite set of strings - in principle you could list every one." ]
+    | Ast.Infinite ->
+        badgeTip
+            "badge badge-info"
+            "infinite"
+            [ "A loop or recursion lets strings grow without bound, so there are infinitely many (finite) strings. Full enumeration is impossible; coverage is the practical target." ]
 
 let private optInt =
     function
@@ -359,9 +379,17 @@ let private samplesView (out: Pipeline.Output) =
                                         [ "Distinct rendered strings among all derivations with tree size <= the current bound."
                                           "Different derivations can render to the same string (that is what ambiguity is); those duplicates are merged here and flagged 'ambiguous'." ] ] ]
                         if out.Truncated then
-                            Html.span [ prop.className "badge badge-warn"; prop.text "truncated" ]
+                            badgeTip
+                                "badge badge-warn"
+                                "truncated"
+                                [ "Enumeration hit the internal scan cap (20000 derivations) before exhausting them all, so some larger samples - and occasionally a branch's first appearance - may be missing."
+                                  "Lower the size bound for a complete, untruncated picture." ]
                         if out.Ambiguous then
-                            Html.span [ prop.className "badge badge-info"; prop.text "ambiguous" ] ] ]
+                            badgeTip
+                                "badge badge-info"
+                                "ambiguous"
+                                [ "Two or more different derivations produced the same string, so the grammar is ambiguous."
+                                  "The duplicate strings are merged into one row here." ] ] ]
 
     let columns =
         Html.div
@@ -394,7 +422,10 @@ let private samplesView (out: Pipeline.Output) =
                                                 [ prop.className "tip-p"
                                                   prop.text (sprintf "%s class - one member shown; the class is not exhausted." label) ] ] ] ] ])
 
-    let coverCount = out.Samples |> List.filter (fun s -> s.InMinimalCover) |> List.length
+    let coverCount =
+        match out.Summary with
+        | Some s -> s.MinimalCoverSize
+        | None -> 0
 
     let coverChip =
         Html.span

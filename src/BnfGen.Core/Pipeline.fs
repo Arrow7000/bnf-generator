@@ -191,25 +191,31 @@ module Pipeline =
                 // member guaranteed to be present, and the chosen set stable.
                 // (Below saturation the "cover of what's revealed so far" would
                 // shift as you raise the bound, which is misleading.)
+                //
+                // Candidates are ALL distinct samples (smallest first), so the
+                // result genuinely covers everything regardless of where the
+                // saturation size lands.
                 let coverKeys =
                     if fullyCovered then
-                        let cutoff =
-                            match saturation with
-                            | Some n -> n
-                            | None -> maxSize
-
-                        let candidates =
-                            distinct
-                            |> List.filter (fun e -> e.Size <= cutoff)
-                            |> List.sortBy (fun e -> e.Size, e.Text)
-                            |> List.map (fun e -> e.Text, e.Tokens)
-
-                        greedyCover coveredAll candidates
+                        distinct
+                        |> List.sortBy (fun e -> e.Size, e.Text)
+                        |> List.map (fun e -> e.Text, e.Tokens)
+                        |> greedyCover coveredAll
                     else
                         Set.empty
 
+                // Show the smallest `limit` samples, but always include every
+                // cover member even if it would fall past the display limit.
+                let sortedAll = distinct |> List.sortBy (fun e -> e.Size, e.Text)
+                let shown = sortedAll |> List.truncate limit
+                let shownTexts = shown |> List.map (fun e -> e.Text) |> Set.ofList
+
+                let extraCover =
+                    sortedAll
+                    |> List.filter (fun e -> Set.contains e.Text coverKeys && not (Set.contains e.Text shownTexts))
+
                 let samples =
-                    distinct
+                    (shown @ extraCover)
                     |> List.map (fun e ->
                         { Text = e.Text
                           Segments = e.Segments
@@ -217,7 +223,6 @@ module Pipeline =
                           Rules = e.Rules
                           InMinimalCover = Set.contains e.Text coverKeys })
                     |> List.sortBy (fun s -> s.Size, s.Text)
-                    |> List.truncate limit
 
                 let summary =
                     { Language = report.Language
