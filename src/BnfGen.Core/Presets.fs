@@ -175,6 +175,94 @@ module Presets =
               Digit      ::= [0-9]
               """
 
+          "Tokens (regex \\d \\w \\s)",
+          dedent
+              """
+              stream ::= token (\s token)*
+              token  ::= word | number
+              word   ::= \w+
+              number ::= \d+
+              """
+
+          "DNA reading frame",
+          dedent
+              """
+              orf   ::= start codon* stop
+              start ::= "ATG"
+              stop  ::= "TAA" | "TAG" | "TGA"
+              codon ::= base base base
+              base  ::= "A" | "C" | "G" | "T"
+              """
+
+          "Lambda calculus",
+          dedent
+              """
+              term        ::= var | abstraction | application | "(" term ")"
+              abstraction ::= "\" var "." term
+              application ::= term term
+              var         ::= [a-z]
+              """
+
+          "Email address (simplified)",
+          dedent
+              """
+              email     ::= local "@" domain
+              local     ::= atom ("." atom)*
+              domain    ::= label ("." label)+
+              atom      ::= atomChar+
+              atomChar  ::= [A-Za-z] | [0-9] | "_" | "-" | "+"
+              label     ::= labelChar+
+              labelChar ::= [A-Za-z] | [0-9] | "-"
+              """
+
+          "URI (RFC 3986, simplified)",
+          dedent
+              """
+              uri       ::= scheme "://" authority path
+              scheme    ::= [A-Za-z] schemeChar*
+              schemeChar ::= [A-Za-z] | [0-9] | "+" | "-" | "."
+              authority ::= host (":" port)?
+              host      ::= hostChar+
+              hostChar  ::= [A-Za-z] | [0-9] | "-" | "."
+              port      ::= [0-9]+
+              path      ::= ("/" segment)*
+              segment   ::= segChar*
+              segChar   ::= [A-Za-z] | [0-9] | "-" | "." | "_" | "~"
+              """
+
+          "Semantic version (semver.org)",
+          dedent
+              """
+              semver   ::= core | core "-" pre | core "+" build | core "-" pre "+" build
+              core     ::= num "." num "." num
+              pre      ::= preId | preId "." pre
+              build    ::= buildId | buildId "." build
+              preId    ::= alnum | num
+              buildId  ::= alnum | digits
+              alnum    ::= nonDigit | nonDigit idChars | idChars nonDigit | idChars nonDigit idChars
+              num      ::= "0" | posDigit | posDigit digits
+              idChars  ::= idChar | idChar idChars
+              idChar   ::= digit | nonDigit
+              nonDigit ::= letter | "-"
+              digits   ::= digit | digit digits
+              digit    ::= "0" | posDigit
+              posDigit ::= [1-9]
+              letter   ::= [A-Za-z]
+              """
+
+          "While language",
+          dedent
+              """
+              stmt   ::= assign | cond | loop | "skip" | stmt ";" stmt
+              assign ::= var ":=" expr
+              cond   ::= "if " bexpr " then " stmt " else " stmt
+              loop   ::= "while " bexpr " do " stmt
+              bexpr  ::= "true" | "false" | expr "=" expr | "not " bexpr
+              expr   ::= var | num | expr "+" expr
+              var    ::= [a-z]
+              num    ::= [0-9]+
+              """
+
           "Non-productive (error demo)",
           dedent
               """

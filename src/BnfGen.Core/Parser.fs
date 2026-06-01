@@ -139,6 +139,27 @@ module Parser =
 
         char code
 
+    /// Regex-style shorthand character classes (a convenience extension beyond
+    /// strict W3C EBNF). Returns the equivalent CharSet, or None if unsupported.
+    let private escapeClass (c: char) : CharSet option =
+        let r lo hi : CharRange = { Lo = lo; Hi = hi }
+        let single ch = r ch ch
+
+        let digit = [ r '0' '9' ]
+        let word = [ r 'A' 'Z'; r 'a' 'z'; r '0' '9'; single '_' ]
+        // space, tab, LF, VT, FF, CR
+        let space =
+            [ single ' '; single '\t'; single '\n'; single '\u000B'; single '\u000C'; single '\r' ]
+
+        match c with
+        | 'd' -> Some { Negated = false; Ranges = digit }
+        | 'D' -> Some { Negated = true; Ranges = digit }
+        | 'w' -> Some { Negated = false; Ranges = word }
+        | 'W' -> Some { Negated = true; Ranges = word }
+        | 's' -> Some { Negated = false; Ranges = space }
+        | 'S' -> Some { Negated = true; Ranges = space }
+        | _ -> None
+
     /// Parse a single character inside a `[...]` class, supporting `#xNN`.
     let private readClassChar (st: State) : char =
         match peek st with
@@ -227,6 +248,17 @@ module Parser =
             advance st
             advance st
             Terminal(string (readHexChar st))
+        | Some '\\' ->
+            advance st
+
+            match peek st with
+            | Some c ->
+                advance st
+
+                match escapeClass c with
+                | Some cs -> CharClass cs
+                | None -> fail st (sprintf "Unsupported escape '\\%c' (try \\d, \\w, \\s, \\D, \\W, \\S)" c)
+            | None -> fail st "Expected a shorthand class after '\\'"
         | Some c when isIdentStart c -> NonTerminal(readIdentifier st)
         | Some '-' -> fail st "The set-difference operator '-' is not supported"
         | Some c -> fail st (sprintf "Unexpected character '%c'" c)
@@ -253,7 +285,7 @@ module Parser =
 
     and private startsTerm (st: State) : bool =
         match peek st with
-        | Some c -> c = '"' || c = '\'' || c = '[' || c = '(' || c = '#' || isIdentStart c
+        | Some c -> c = '"' || c = '\'' || c = '[' || c = '(' || c = '#' || c = '\\' || isIdentStart c
         | None -> false
 
     and private parseSequence (st: State) : Expr =

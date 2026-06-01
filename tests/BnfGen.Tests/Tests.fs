@@ -132,6 +132,21 @@ let ``unreachable rule is warned but not fatal`` () =
     Assert.Contains("unreachable", messages out)
 
 [<Fact>]
+let ``regex shorthand classes are supported`` () =
+    let digits = gen """ n ::= \d \d """ 8
+    Assert.True(digits.ParseError.IsNone)
+    Assert.True(texts digits |> Set.forall (fun t -> Regex.IsMatch(t, @"^[0-9][0-9]$")))
+
+    let word = gen """ w ::= \w """ 6
+    Assert.True(word.ParseError.IsNone)
+    Assert.True(texts word |> Set.forall (fun t -> Regex.IsMatch(t, @"^[A-Za-z0-9_]$")))
+
+    // Negated shorthand: \D is any non-digit.
+    let nond = gen """ x ::= \D """ 6
+    Assert.True(nond.ParseError.IsNone)
+    Assert.True(texts nond |> Set.forall (fun t -> not (Regex.IsMatch(t, @"^[0-9]$"))))
+
+[<Fact>]
 let ``character class renders a single member`` () =
     let out = gen """ D ::= [0-9] """ 6
     Assert.Equal(1, out.DistinctCount)
@@ -171,10 +186,10 @@ let ``every preset parses`` () =
 
 [<Fact>]
 let ``presets are viable except the error demo`` () =
-    // Generous bound so every viable preset yields at least one sample (the
-    // EBNF self-grammar's smallest derivation is already 15 nodes).
+    // Generous bound so every viable preset yields at least one sample even
+    // for the chunkier grammars (some have larger minimum derivations).
     for (name, src) in Presets.all do
-        let out = gen src 24
+        let out = gen src 40
         Assert.True(out.ParseError.IsNone, sprintf "preset '%s' has a parse error" name)
 
         if name.Contains "error" then

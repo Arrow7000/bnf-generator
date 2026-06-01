@@ -15,6 +15,30 @@ module Enumerate =
 
     open Ast
 
+    /// Round-robin merge of several lazy sequences. Used so that alternatives
+    /// are explored fairly: small derivations from every branch appear early,
+    /// rather than exhausting one branch before starting the next. This keeps
+    /// coverage correct even when a later scan cap truncates the stream.
+    let private interleave (sources: seq<'T> list) : seq<'T> =
+        match sources with
+        | [] -> Seq.empty
+        | [ one ] -> one
+        | _ ->
+            seq {
+                let enumerators = sources |> List.map (fun s -> s.GetEnumerator()) |> List.toArray
+                let alive = Array.create enumerators.Length true
+                let mutable remaining = enumerators.Length
+
+                while remaining > 0 do
+                    for i in 0 .. enumerators.Length - 1 do
+                        if alive.[i] then
+                            if enumerators.[i].MoveNext() then
+                                yield enumerators.[i].Current
+                            else
+                                alive.[i] <- false
+                                remaining <- remaining - 1
+            }
+
     /// All derivations of `e` whose node size is at most `fuel`, paired with
     /// their size. `fuel` is the remaining size budget for this subtree.
     let rec private enumExpr (g: Grammar) (fuel: int) (e: Expr) : seq<Node * int> =
@@ -34,7 +58,7 @@ module Enumerate =
                     // recursion.
                     enumExpr g (fuel - 1) body
                     |> Seq.map (fun (child, sz) -> NRule(name, child), sz + 1)
-            | Alt alts -> alts |> Seq.ofList |> Seq.collect (enumExpr g fuel)
+            | Alt alts -> alts |> List.map (enumExpr g fuel) |> interleave
             | Seq items ->
                 enumSeqItems g (fuel - 1) items
                 |> Seq.map (fun (children, sz) -> NSeq children, sz + 1)
