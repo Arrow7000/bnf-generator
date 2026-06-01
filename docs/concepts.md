@@ -1,112 +1,166 @@
-# Concepts: exhaustiveness, loops, and what to measure
+# Concepts: exhaustiveness, parsers, and what to measure
 
-This document is the mental model behind the tool. It explains why "generate all
-valid strings" is usually impossible, what "exhaustive" can sensibly mean
-instead, and which metrics are worth surfacing.
+A consultable overview of the domain this tool lives in: why "generate all valid
+strings" is usually impossible, what "exhaustive" can sensibly mean, how grammar
+generation relates to grammar parsing, and which metrics are worth surfacing.
+
+---
 
 ## 1. Two different "sizes": the language vs the derivation set
 
 A grammar defines a **language**: the (often infinite) set of strings it accepts.
 It also defines a set of **derivations**: the distinct ways of *building* a string
-by choosing alternatives and repetitions. These are not the same thing:
+by choosing alternatives and repetitions. These are not the same:
 
-- One string can have many derivations (that is exactly what *ambiguity* is).
-- The language can be infinite even when each individual string is finite.
+- One string can have many derivations -- that is exactly what *ambiguity* is.
+- The language can be infinite even though every individual string is finite.
 
 The tool enumerates **derivations**, then renders each to a string. We care about
 derivations because "coverage" is about exercising the *choices* in the grammar,
 not just collecting output strings.
 
-## 2. Why "every string" is usually infinite
+## 2. Three states of a grammar: empty / finite / infinite
 
-If any reachable, productive nonterminal can re-derive itself while contributing
-at least one terminal — `A ::= "x" A | "x"`, or `list ::= list "," x | x` — then
-the language is **infinite**. There is no finite set of strings that is
-"complete." This is the single most important fact:
+For a *specific* grammar these are **definite, decidable** facts -- not "possibly".
+The subtlety is only in which *check* you implement:
 
-> For any grammar with a productive loop or recursion, full language enumeration
-> is infinite. Full enumeration is therefore not a knob we can turn; it is simply
-> off the table.
+- A cheap structural check ("is there a cycle in the rule graph?") is an
+  *over-approximation* -> it can only claim "**possibly** infinite", because not
+  every cycle pumps. Counterexample: `A ::= B` / `B ::= A | "x"` has a cycle but
+  the language is just `{"x"}`.
+- The **exact** check claims "**definitely** finite/infinite". The classic
+  algorithm: delete useless symbols, eliminate the cycles that don't add length
+  (unit/epsilon cycles), then a remaining cycle means infinite.
 
-Decidable facts we *can* compute about this:
+The three states:
 
-- **Productive?** Can a nonterminal derive any finite string at all? (If the start
-  symbol is not productive, the grammar requires infinitely long strings — we
-  reject it.) *Implemented.*
-- **Finite or infinite language?** After deleting useless symbols, the language is
-  infinite iff the dependency graph still has a cycle. *Computable from what we
-  have; not yet surfaced.*
+| State | Meaning | Tool behaviour |
+| --- | --- | --- |
+| **Empty** | no finite strings exist (non-productive) | fatal error, we refuse to generate |
+| **Finite** | finitely many strings; "all strings" is achievable | enumerable in full |
+| **Infinite** | infinitely many finite strings | "all strings" impossible; must pick a coverage criterion |
 
-## 3. Notions of "exhaustive" and their feasibility
+> The tool computes the **exact** classification (`Analysis.classifyLanguage`): the
+> language is Infinite iff there is a reachable, productive **pumping site** --
+> either a `*`/`+` over a non-empty-capable expression, or a "growth cycle" among
+> nonterminals (a recursive cycle that emits >= 1 terminal each time round).
+
+## 3. Parsers: the families, and how each copes
+
+"Left recursion is a problem" is really "a problem for *one family* of parsers".
+The families:
+
+| Family | Examples | Direction | Left recursion | Ambiguity |
+| --- | --- | --- | --- | --- |
+| **Top-down, predictive** | LL(k), recursive descent, PEG/packrat | builds the tree from the root, scanning input left-to-right | **loops forever** (recurses on the leftmost symbol without consuming input) | cannot represent it; picks one path |
+| **Bottom-up** | LR(0), SLR, LALR, LR(k), shift-reduce | builds the tree from the leaves up, shifting tokens onto a stack and reducing | **handled fine**; right recursion costs stack instead | reports conflicts (shift/reduce) |
+| **General CFG** | Earley, GLR, CYK | explore all possibilities (chart / dynamic programming / parse forest) | **handled fine** | **handled**; can return a parse *forest* of all derivations |
+
+How the non-top-down ones avoid the left-recursion trap:
+
+- **Bottom-up (LR):** it never "calls a rule" speculatively. It shifts real
+  tokens onto a stack and only *reduces* `X Y Z -> A` once it has actually seen
+  `X Y Z`. Because every shift consumes a token, there is no way to spin without
+  progress. Left recursion just means the stack grows on the left; that is fine.
+- **General (Earley/GLR/CYK):** they track *sets* of partial parses positionally
+  (a chart indexed by input position). A left-recursive rule simply adds an item
+  to the chart at the same position; it cannot create an infinite loop because
+  there are finitely many distinct items per position. They also represent
+  *every* derivation, so ambiguity is data, not a crash.
+
+Rule of thumb: top-down parsers are easy to hand-write but fragile (no left
+recursion, limited lookahead); bottom-up parsers are what tools like yacc/bison
+generate; general parsers are the most permissive and are the right choice when
+you do not control the grammar.
+
+## 4. Generability vs parseability are independent axes
+
+A grammar can sit in any cell of this matrix:
+
+|  | parser-friendly | parser-hostile (left-recursive / ambiguous) |
+| --- | --- | --- |
+| **generable** | the happy case | still fully generable by us |
+| **non-generable** (non-productive) | we refuse (fatal) | we refuse (fatal) |
+
+So the tool reports diagnostics in **two lanes** (plus a structural one):
+
+- **Generation lane:** does it block *us*? Non-productive start (fatal),
+  reachable-but-non-productive sub-rules (warning).
+- **Parsing lane:** would a downstream parser-author have a bad time? Left
+  recursion (info), ambiguity (info/flag).
+- **Structure lane:** general hygiene -- undefined references (fatal),
+  unreachable rules, duplicate definitions.
+
+### The duality (why generation and parsing fail differently)
+
+| | Parser | Generator |
+| --- | --- | --- |
+| what is "progress"? | consuming input tokens | approaching terminal leaves |
+| the nightmare | recursion that consumes no input | recursion that reaches no base case |
+| direction-sensitive? | yes -- *left* recursion specifically | no -- *any* unproductive recursion |
+| our detector | left-recursion note (Parsing lane) | non-productivity (fatal, Generation lane) |
+
+The generator's analogue of the parser's left-recursion trap is **non-productivity**
+("the only derivations are infinite"). A naive generator that always expands the
+recursive alternative has the *mirror-image bug*; we avoid it by bounding the
+derivation-tree size (a strictly decreasing measure) and by enumerating the base
+alternative too. "There is a non-recursive base production" == "productive" ==
+"generable".
+
+### Should we flag *all* issues of *all* parser families?
+
+No -- that would be noisy and many are parser-generator-specific (e.g. LALR
+shift/reduce conflicts depend on the exact tool). The useful, family-agnostic
+properties to surface are: **left recursion** (kills top-down), **ambiguity**
+(forces a forest / hides bugs), and -- if we ever want it -- **LL(1)
+conflicts** (FIRST/FIRST and FIRST/FOLLOW). These are informational; they never
+block generation.
+
+## 5. The exhaustiveness ladder
 
 "Exhaustive" is a dial, not a point. From weakest/cheapest to strongest:
 
 | Criterion | "Done" when... | Finite? | Notes |
 | --- | --- | --- | --- |
-| **Bounded-exhaustive (size ≤ N)** | every derivation with ≤ N nodes is produced | finite for each N, but grows without bound as N→∞ | **what the tool does today**; complete *relative to a bound* |
-| **Production / rule coverage** | every rule alternative used ≥ 1 time | yes, finite minimal set exists | the classic target (Purdom 1972) |
-| **Branch / alternative coverage** | every `|` branch taken ≥ 1 time | yes | a refinement of the above |
-| **Loop-boundary coverage** | every `*`/`+` exercised at 0, 1, and ≥2 reps | yes | this is what forces strings that *enter* loops, not just bail out |
-| **Recursion-depth coverage** | every recursive rule used at depth 0, 1, 2 | yes (for a fixed depth) | analogous to loop boundaries, for recursion |
-| **k-context coverage** | every rule used *in the context of* every caller | yes, larger | catches interactions between rules |
-| **Full language** | every string produced | **no** (infinite for looping grammars) | infeasible in general |
+| **Rule coverage** | every useful rule used >= 1 time | yes | coarsest |
+| **Branch coverage** | every `|` alternative (any nesting) taken | yes | **what the tool reports today** |
+| **Loop-boundary coverage** | every `*`/`+` at 0, 1, >=2 reps | yes | forces strings that *enter* loops |
+| **Recursion-depth coverage** | every recursive rule at depth 0,1,2 | yes (fixed depth) | recursion analogue of loop boundaries |
+| **k-context coverage** | every rule used *in the context of* every caller | yes, larger | principled "some combinations" (pairwise-style) |
+| **Bounded-exhaustive (size <= N)** | every derivation with <= N nodes | finite per N, unbounded as N grows | complete *relative to a bound* |
+| **Full language** | every string | **no** for looping grammars | infeasible in general |
 
-The crucial insight: **only coverage-based criteria have a finite, well-defined
-"you are now exhaustive" point.** Bounded-exhaustive is complete only relative to
-the bound you picked; full enumeration never terminates for interesting grammars.
+The key fact you cannot escape: **"every combination of rules" = the full
+derivation set = infinite** for any looping grammar. Only *bounded* combinations
+exist. So instead of one unreachable top, offer a ladder of finite rungs, each
+with a saturation point, and climb until it gets too expensive.
 
-## 4. The levers
+### "How many generations to reach exhaustivity?"
 
-Independent dials you might expose, roughly orthogonal:
+- Under **bounded-exhaustive (size <= N)**: the answer is the derivation *count*
+  at that bound (`DistinctCount`); it grows without bound, so "exhaustive" always
+  means "up to N".
+- Under **rule/branch coverage**: there is a finite minimal number, and it
+  **saturates** -- beyond some size `N*`, more derivations add no new coverage.
+  The tool reports this `N*` as the saturation size.
 
-1. **Size bound `N`** (tree-node count). *Implemented.* Governs how deep/large
-   derivations may get. It is the master safety bound that guarantees termination.
-2. **Coverage criterion** (table above). *Not yet exposed.* Changes *which* of the
-   size-bounded derivations you keep — e.g. "smallest set hitting every
-   production" instead of "all of them."
-3. **Loop unrolling bound** (max repetitions of `*`/`+`). *Not separated yet* —
-   currently folded into the size bound. Pulling it out lets you say "show me
-   0/1/2 repetitions" cheaply, independent of overall size.
-4. **Recursion-depth bound.** *Not separated yet.* Same idea for self-reference.
-5. **String-length filter.** *Not yet exposed.* A secondary post-filter on the
-   rendered output (distinct from tree size).
-6. **Char-class concretization policy.** Currently one representative; could be
-   "first/last/sample" or "every member."
-7. **Dedup policy.** Currently dedup by rendered string (with an ambiguity flag);
-   could switch to per-derivation.
+## 6. What the tool computes and surfaces today
 
-## 5. "How many generations to reach exhaustivity?"
+Implemented in `BnfGen.Core` and shown in the CLI and web UI:
 
-It depends on the criterion:
+- **Language classification** -- exact Empty / Finite / Infinite badge
+  (`Analysis.classifyLanguage`).
+- **Diagnostics in two lanes** (generation / parsing) plus structure
+  (`Ast.Lane`).
+- **Rule coverage** and **branch coverage** (`Coverage`, every `|` at any
+  nesting), with covered/total and a **saturation size**.
+- **Minimum derivation size**, **max loop repetitions**, and **max recursion
+  depth** reached within the current bound.
+- **Bounded-exhaustive enumeration** by derivation-tree node count, with an
+  ambiguity flag and a truncation flag.
 
-- Under **bounded-exhaustive (size ≤ N)**: the answer is just the derivation
-  *count* at that bound. We already compute and show this (`DistinctCount`), and
-  `countUpTo` can produce the growth curve `count(1), count(2), ...`. There is no
-  finite ceiling — it keeps growing — so "exhaustive" here always means "up to N."
-- Under **production coverage**: there is a finite minimal number, and it
-  *saturates* — beyond some size `N*`, covering more derivations adds no new
-  rules. The right signals are "productions covered: 7/7" and "saturated at size
-  N*". We have the raw material (`Sample.Rules` records the rules each sample
-  uses; `Analysis.minCost` gives the cheapest derivation per rule) but do **not**
-  yet aggregate or surface coverage.
-
-So: the model has the *ingredients* for coverage-based exhaustiveness, but today
-the only exhaustiveness signal in the UI is `DistinctCount` + the `truncated`
-flag, which is the bounded-exhaustive notion.
-
-## 6. Metrics worth surfacing (recommended)
-
-Cheap, high-value additions, roughly in priority order:
-
-1. **Finite vs infinite language** — a single decisive badge.
-2. **Minimum derivation size** per grammar (smallest `N` that yields any string)
-   and per rule (`minCost`, already computed).
-3. **Production coverage at the current `N`** — "rules hit: 7/7", "alternatives
-   hit: 11/12", and the saturation size if reached.
-4. **Growth curve** `count(N)` vs `N` — makes the combinatorial explosion (and
-   the size at which you blow the scan cap) visible and intuitive.
-5. **Loop/recursion exercise levels** — for each `*`/`+`/recursive rule, the max
-   repetition/depth reached within the current bound.
-
-Items 2–5 are computable from the existing core with modest additions; none
-require changing the enumeration engine.
+Computable next steps (no engine change needed): loop-boundary as its own
+*selectable criterion* (not just a reported metric); a `count(N)` growth chart;
+and, for round-trip checking, an Earley recognizer driven by the user's grammar
+(general, so it sidesteps left recursion, and only assert derivation-equality
+for grammars confirmed unambiguous).

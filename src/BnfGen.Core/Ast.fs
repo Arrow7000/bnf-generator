@@ -60,7 +60,28 @@ module Ast =
         | Warning
         | Info
 
-    type Diagnostic = { Severity: Severity; Message: string }
+    /// Which concern a diagnostic belongs to. Generability and parseability are
+    /// independent axes: a grammar can be perfectly generable yet hostile to a
+    /// parser (left-recursive, ambiguous), or structurally malformed.
+    type Lane =
+        /// Affects whether *we* can generate samples.
+        | Generation
+        /// Affects whether a downstream *parser* would have a good time.
+        | Parsing
+        /// General structural hygiene (undefined refs, unreachable rules, ...).
+        | Structure
+
+    type Diagnostic =
+        { Severity: Severity
+          Lane: Lane
+          Message: string }
+
+    /// Whether a grammar's language is empty (no finite strings), finite, or
+    /// infinite (unboundedly many finite strings).
+    type LanguageKind =
+        | Empty
+        | Finite
+        | Infinite
 
     /// Number of tree nodes in a derivation. This is the measure bounded during
     /// enumeration, which is what guarantees termination even for left-recursive

@@ -103,6 +103,36 @@
 
       .muted { color: var(--muted); }
 
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px 16px;
+      }
+      .metric {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: 6px;
+        background: var(--panel-2);
+      }
+      .metric-label { color: var(--muted); font-size: 0.85rem; }
+      .metric-value { font-family: var(--mono); font-size: 0.9rem; }
+      .badge-ok { background: rgba(120, 220, 150, 0.15); color: #78dc96; }
+      .badge-error { background: rgba(255, 107, 107, 0.15); color: var(--error); }
+
+      .diag-lane {
+        font-family: var(--mono);
+        font-size: 0.68rem;
+        text-transform: uppercase;
+        padding: 2px 6px;
+        border-radius: 4px;
+        white-space: nowrap;
+        color: var(--muted);
+        background: rgba(255,255,255,0.04);
+      }
+
       .samples-meta { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; color: var(--muted); font-size: 0.9rem; }
       .badge { font-size: 0.72rem; padding: 2px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.03em; }
       .badge-warn { background: rgba(255,180,84,0.15); color: var(--warn); }

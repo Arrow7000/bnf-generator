@@ -21,9 +21,15 @@ grammars: you cannot build an unbounded tree within a finite node budget.
 
 At a given size bound `N`, the tool emits *every* derivation whose tree has at
 most `N` nodes. Growing `N` is what forces loops and recursion to be explored
-(0, 1, 2, ... repetitions; deeper nesting). See
-[docs/concepts](#concepts--further-reading) below for how this relates to
-"coverage" and why full language enumeration is generally infinite.
+(0, 1, 2, ... repetitions; deeper nesting).
+
+Alongside the samples it reports a **grammar summary**: an exact Empty / Finite /
+Infinite language classification, **rule and branch coverage** (every `|`
+alternative, at any nesting), the **saturation size** at which coverage stops
+growing (the practical "you are now exhaustive" point), and the deepest loop /
+recursion levels reached. Diagnostics are split into a generation lane and a
+parsing lane, because generability and parseability are independent. See
+[docs/concepts.md](docs/concepts.md) for the full mental model.
 
 ## Project layout
 

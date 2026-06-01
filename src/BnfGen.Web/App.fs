@@ -55,6 +55,61 @@ let private severityLabel (s: Ast.Severity) =
     | Ast.Warning -> "warning"
     | Ast.Info -> "info"
 
+let private laneLabel (l: Ast.Lane) =
+    match l with
+    | Ast.Generation -> "generation"
+    | Ast.Parsing -> "parsing"
+    | Ast.Structure -> "structure"
+
+let private metric (label: string) (value: ReactElement) =
+    Html.div
+        [ prop.className "metric"
+          prop.children
+              [ Html.span [ prop.className "metric-label"; prop.text label ]
+                Html.span [ prop.className "metric-value"; prop.children [ value ] ] ] ]
+
+let private textValue (s: string) = Html.span [ prop.text s ]
+
+let private languageBadge (k: Ast.LanguageKind) =
+    let cls, txt =
+        match k with
+        | Ast.Empty -> "badge badge-error", "empty"
+        | Ast.Finite -> "badge badge-ok", "finite"
+        | Ast.Infinite -> "badge badge-info", "infinite"
+
+    Html.span [ prop.className cls; prop.text txt ]
+
+let private summaryView (out: Pipeline.Output) =
+    match out.Summary with
+    | None -> Html.none
+    | Some s ->
+        let optInt =
+            function
+            | Some n -> string n
+            | None -> "-"
+
+        let coverageNote =
+            if s.FullyCovered then "fully covered"
+            else "partial within bound"
+
+        Html.div
+            [ prop.className "panel"
+              prop.children
+                  [ Html.h2 [ prop.text "Grammar summary" ]
+                    Html.div
+                        [ prop.className "summary-grid"
+                          prop.children
+                              [ metric "Language" (languageBadge s.Language)
+                                metric "Min size" (textValue (optInt s.MinSize))
+                                metric "Rule coverage" (textValue (sprintf "%d / %d" s.RulesCovered s.RulesTotal))
+                                metric
+                                    "Branch coverage"
+                                    (textValue (sprintf "%d / %d" s.BranchesCovered s.BranchesTotal))
+                                metric "Saturates at size" (textValue (optInt s.SaturationSize))
+                                metric "Coverage" (textValue coverageNote)
+                                metric "Max loop reps" (textValue (string s.MaxLoopReps))
+                                metric "Max recursion depth" (textValue (string s.MaxRecursionDepth)) ] ] ] ]
+
 let private diagnosticsView (out: Pipeline.Output) =
     let items =
         match out.ParseError with
@@ -71,6 +126,7 @@ let private diagnosticsView (out: Pipeline.Output) =
                     [ prop.className (severityClass d.Severity)
                       prop.children
                           [ Html.span [ prop.className "diag-tag"; prop.text (severityLabel d.Severity) ]
+                            Html.span [ prop.className "diag-lane"; prop.text (laneLabel d.Lane) ]
                             Html.span [ prop.text d.Message ] ] ])
 
     Html.div
@@ -153,7 +209,10 @@ let private view (model: Model) (dispatch: Msg -> unit) =
                                                               dispatch (SetSize(int v))) ] ] ] ] ]
                             Html.div
                                 [ prop.className "results"
-                                  prop.children [ diagnosticsView model.Output; samplesView model.Output ] ] ] ] ] ]
+                                  prop.children
+                                      [ summaryView model.Output
+                                        diagnosticsView model.Output
+                                        samplesView model.Output ] ] ] ] ] ]
 
 // ---------------------------------------------------------------------------
 // Program

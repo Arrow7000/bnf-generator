@@ -152,6 +152,70 @@ let ``star produces increasing repetitions including empty`` () =
     Assert.Contains("aa", ts)
 
 // ---------------------------------------------------------------------------
+// Language classification (Empty / Finite / Infinite)
+// ---------------------------------------------------------------------------
+
+let private classify src =
+    match Parser.parse src with
+    | Result.Ok g ->
+        let r = Analysis.analyze g
+        r.Language
+    | Result.Error e -> failwithf "parse failed: %s" e.Message
+
+[<Fact>]
+let ``finite language is classified finite`` () =
+    Assert.Equal(Finite, classify """ S ::= ("a" | "b") "c"? """)
+
+[<Fact>]
+let ``star over non-empty makes the language infinite`` () =
+    Assert.Equal(Infinite, classify """ S ::= "a"* """)
+
+[<Fact>]
+let ``recursion that emits a terminal makes the language infinite`` () =
+    Assert.Equal(Infinite, classify """ list ::= list "," "x" | "x" """)
+
+[<Fact>]
+let ``unit cycle without growth stays finite`` () =
+    // A <-> B is a cycle, but it emits no terminals, so the language is just {"x"}.
+    Assert.Equal(Finite, classify "A ::= B\nB ::= A | \"x\"")
+
+[<Fact>]
+let ``star over an empty-only expression stays finite`` () =
+    // The inner can only ever derive the empty string, so repetition adds nothing.
+    Assert.Equal(Finite, classify "S ::= E*\nE ::= \"\"")
+
+[<Fact>]
+let ``non-productive grammar has empty language`` () =
+    Assert.Equal(Empty, classify """ A ::= "x" A """)
+
+// ---------------------------------------------------------------------------
+// Coverage and saturation
+// ---------------------------------------------------------------------------
+
+[<Fact>]
+let ``nested alternations are counted as branches`` () =
+    let out = gen """ greeting ::= ("hello" | "hi") " " ("world" | "there") """ 12
+    match out.Summary with
+    | Some s ->
+        Assert.Equal(4, s.BranchesTotal)
+        Assert.Equal(4, s.BranchesCovered)
+        Assert.True(s.FullyCovered)
+    | None -> Assert.Fail "expected a summary"
+
+[<Fact>]
+let ``coverage saturates at a finite size for an infinite grammar`` () =
+    let out = gen """ expr ::= term ("+" term)*
+                      term ::= factor ("*" factor)*
+                      factor ::= [0-9] | "(" expr ")" """ 18
+    match out.Summary with
+    | Some s ->
+        Assert.Equal(Infinite, s.Language)
+        Assert.True(s.FullyCovered)
+        Assert.True(s.SaturationSize.IsSome)
+        Assert.True(s.MaxLoopReps >= 1)
+    | None -> Assert.Fail "expected a summary"
+
+// ---------------------------------------------------------------------------
 // Property-based tests over randomly generated small grammars
 // ---------------------------------------------------------------------------
 
@@ -214,6 +278,24 @@ let ``derivation count is monotonic in the size bound`` () =
         Prop.forAll arbGrammar (fun g ->
             [ 0..5 ]
             |> List.forall (fun n -> Enumerate.countUpTo g n 2000 <= Enumerate.countUpTo g (n + 1) 2000))
+
+    Check.QuickThrowOnFailure prop
+
+[<Fact>]
+let ``every covered token is a declared coverage target`` () =
+    // Validates that the static target paths and the dynamic co-walk paths agree
+    // (no off-by-one in the path identity scheme).
+    let prop =
+        Prop.forAll arbGrammar (fun g ->
+            let useful = Set.intersect (Analysis.productiveSet g) (Analysis.reachableSet g)
+            let targets = Coverage.targets g useful
+
+            let covered =
+                Enumerate.enumerate g 7
+                |> Seq.truncate 500
+                |> Seq.fold (fun acc node -> Set.union acc (Coverage.analyzeDerivation g node).Tokens) Set.empty
+
+            Set.isSubset covered targets)
 
     Check.QuickThrowOnFailure prop
 

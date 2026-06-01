@@ -9,12 +9,42 @@ let private severityTag =
     | Ast.Warning -> "warn "
     | Ast.Info -> "info "
 
+let private laneTag =
+    function
+    | Ast.Generation -> "generation"
+    | Ast.Parsing -> "parsing"
+    | Ast.Structure -> "structure"
+
+let private languageStr =
+    function
+    | Ast.Empty -> "empty (no finite strings)"
+    | Ast.Finite -> "finite"
+    | Ast.Infinite -> "infinite"
+
 let private printDiagnostics (diags: Ast.Diagnostic list) =
     if not (List.isEmpty diags) then
         eprintfn "Diagnostics:"
 
         for d in diags do
-            eprintfn "  [%s] %s" (severityTag d.Severity) d.Message
+            eprintfn "  [%s] [%s] %s" (severityTag d.Severity) (laneTag d.Lane) d.Message
+
+let private printSummary (s: Pipeline.Summary) =
+    printfn "Summary:"
+    printfn "  language: %s" (languageStr s.Language)
+
+    match s.MinSize with
+    | Some m -> printfn "  min derivation size: %d" m
+    | None -> ()
+
+    printfn "  rule coverage: %d/%d" s.RulesCovered s.RulesTotal
+    printfn "  branch coverage: %d/%d" s.BranchesCovered s.BranchesTotal
+    printfn "  fully covered: %b" s.FullyCovered
+
+    match s.SaturationSize with
+    | Some n -> printfn "  coverage saturated at size: %d" n
+    | None -> ()
+
+    printfn "  max loop reps: %d, max recursion depth: %d" s.MaxLoopReps s.MaxRecursionDepth
 
 let private usage () =
     eprintfn "Usage: bnfgen [grammar-file] [--size N] [--limit M] [--sep S]"
@@ -69,6 +99,7 @@ let main argv =
                 eprintfn "Cannot generate samples: the grammar has fatal errors."
                 1
             else
+                result.Summary |> Option.iter printSummary
                 printfn "Samples (%d distinct, size <= %d):" result.DistinctCount size
 
                 for s in result.Samples do

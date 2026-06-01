@@ -28,21 +28,22 @@ module Analysis =
         | Seq xs
         | Alt xs -> xs |> List.fold (fun acc x -> Set.union acc (refsOf x)) Set.empty
 
+    /// Is `e` productive given the set of productive nonterminals so far?
+    let rec exprProductive (productive: Set<string>) (e: Expr) : bool =
+        match e with
+        | Terminal _ -> true
+        | CharClass cs -> not (CharSet.isEmpty cs)
+        | Epsilon -> true
+        | NonTerminal n -> Set.contains n productive
+        | Seq xs -> xs |> List.forall (exprProductive productive)
+        | Alt xs -> xs |> List.exists (exprProductive productive)
+        | Opt _ -> true
+        | Star _ -> true
+        | Plus x -> exprProductive productive x
+
     /// Least fixed point: the set of nonterminals that can derive some finite,
     /// all-terminal string.
     let productiveSet (g: Grammar) : Set<string> =
-        let rec prod (set: Set<string>) (e: Expr) : bool =
-            match e with
-            | Terminal _ -> true
-            | CharClass cs -> not (CharSet.isEmpty cs)
-            | Epsilon -> true
-            | NonTerminal n -> Set.contains n set
-            | Seq xs -> xs |> List.forall (prod set)
-            | Alt xs -> xs |> List.exists (prod set)
-            | Opt _ -> true
-            | Star _ -> true
-            | Plus x -> prod set x
-
         let mutable current = Set.empty
         let mutable changed = true
 
@@ -50,7 +51,7 @@ module Analysis =
             changed <- false
 
             for r in g.Rules do
-                if not (Set.contains r.Name current) && prod current r.Body then
+                if not (Set.contains r.Name current) && exprProductive current r.Body then
                     current <- Set.add r.Name current
                     changed <- true
 
@@ -139,6 +140,145 @@ module Analysis =
 
         m |> Map.filter (fun _ v -> v < inf)
 
+    /// Can `e` derive a terminal string of length >= 1, given the set of
+    /// nonterminals known to be able to do so? (Requires the surrounding
+    /// derivation to be able to complete, hence the productivity guards.)
+    let rec canBeNonEmptyExpr (ne: Set<string>) (productive: Set<string>) (e: Expr) : bool =
+        match e with
+        | Terminal s -> s.Length >= 1
+        | CharClass cs -> not (CharSet.isEmpty cs)
+        | Epsilon -> false
+        | NonTerminal n -> Set.contains n ne
+        | Seq xs ->
+            List.forall (exprProductive productive) xs
+            && List.exists (canBeNonEmptyExpr ne productive) xs
+        | Alt xs -> xs |> List.exists (fun x -> exprProductive productive x && canBeNonEmptyExpr ne productive x)
+        | Opt x
+        | Star x
+        | Plus x -> canBeNonEmptyExpr ne productive x
+
+    /// Least fixed point: nonterminals that can derive at least one non-empty
+    /// string.
+    let canBeNonEmptySet (g: Grammar) (productive: Set<string>) : Set<string> =
+        let mutable current = Set.empty
+        let mutable changed = true
+
+        while changed do
+            changed <- false
+
+            for r in g.Rules do
+                if not (Set.contains r.Name current) && canBeNonEmptyExpr current productive r.Body then
+                    current <- Set.add r.Name current
+                    changed <- true
+
+        current
+
+    /// Classify a grammar's language as Empty, Finite, or Infinite. This is an
+    /// exact decision, not an over-approximation: the language is Infinite iff
+    /// there is a reachable, productive pumping site -- either a `*`/`+` over a
+    /// non-empty-capable expression, or a "growth cycle" among nonterminals (a
+    /// recursive cycle that emits at least one terminal each time round).
+    let classifyLanguage
+        (g: Grammar)
+        (productive: Set<string>)
+        (reachable: Set<string>)
+        (canBeNonEmpty: Set<string>)
+        : LanguageKind =
+        if not (Set.contains g.Start productive) then
+            Empty
+        else
+            let useful = Set.intersect productive reachable
+
+            // (a) A repetition over something that can be non-empty, sitting in
+            // a context that can complete.
+            let hasPumpingStarPlus () =
+                let rec scan (e: Expr) : bool =
+                    match e with
+                    | Star x
+                    | Plus x -> canBeNonEmptyExpr canBeNonEmpty productive x || scan x
+                    | Opt x -> scan x
+                    | Seq xs -> List.forall (exprProductive productive) xs && List.exists scan xs
+                    | Alt xs -> xs |> List.exists (fun x -> exprProductive productive x && scan x)
+                    | NonTerminal _
+                    | Terminal _
+                    | CharClass _
+                    | Epsilon -> false
+
+                g.Rules
+                |> List.exists (fun r -> Set.contains r.Name useful && scan r.Body)
+
+            // (b) Occurrences of useful nonterminals in a body, each flagged
+            // with whether reaching it can be accompanied by >= 1 terminal.
+            let occurrences (body: Expr) : (string * bool) list =
+                let rec collect (e: Expr) (ctxEmit: bool) : (string * bool) seq =
+                    match e with
+                    | NonTerminal b -> Seq.singleton (b, ctxEmit)
+                    | Terminal _
+                    | CharClass _
+                    | Epsilon -> Seq.empty
+                    | Opt x -> collect x ctxEmit
+                    | Star x
+                    | Plus x -> collect x (ctxEmit || canBeNonEmptyExpr canBeNonEmpty productive x)
+                    | Alt xs ->
+                        xs
+                        |> Seq.ofList
+                        |> Seq.collect (fun b -> if exprProductive productive b then collect b ctxEmit else Seq.empty)
+                    | Seq xs ->
+                        if not (List.forall (exprProductive productive) xs) then
+                            Seq.empty
+                        else
+                            xs
+                            |> List.mapi (fun i xi ->
+                                let siblingEmits =
+                                    xs
+                                    |> List.mapi (fun j xj -> j, xj)
+                                    |> List.exists (fun (j, xj) ->
+                                        j <> i && canBeNonEmptyExpr canBeNonEmpty productive xj)
+
+                                collect xi (ctxEmit || siblingEmits))
+                            |> Seq.concat
+
+                collect body false
+                |> Seq.filter (fun (b, _) -> Set.contains b useful)
+                |> Seq.toList
+
+            let occOf (a: string) =
+                match Map.tryFind a g.RuleMap with
+                | Some body -> occurrences body
+                | None -> []
+
+            let adj =
+                useful
+                |> Set.toList
+                |> List.map (fun a -> a, occOf a |> List.map fst |> Set.ofList)
+                |> Map.ofList
+
+            let canReach (src: string) (dst: string) : bool =
+                let rec bfs visited frontier =
+                    match frontier with
+                    | [] -> false
+                    | n :: rest ->
+                        if n = dst then true
+                        elif Set.contains n visited then bfs visited rest
+                        else
+                            let next =
+                                match Map.tryFind n adj with
+                                | Some s -> Set.toList s
+                                | None -> []
+
+                            bfs (Set.add n visited) (next @ rest)
+
+                bfs Set.empty [ src ]
+
+            let hasGrowthCycle () =
+                useful
+                |> Set.exists (fun a -> occOf a |> List.exists (fun (b, growth) -> growth && canReach b a))
+
+            if hasPumpingStarPlus () || hasGrowthCycle () then
+                Infinite
+            else
+                Finite
+
     /// Nonterminals that are left-recursive (can re-derive themselves as the
     /// leftmost symbol). Informational only.
     let leftRecursiveSet (g: Grammar) : Set<string> =
@@ -222,6 +362,7 @@ module Analysis =
           Reachable: Set<string>
           MinCost: Map<string, int>
           LeftRecursive: Set<string>
+          Language: LanguageKind
           /// True when an Error-level diagnostic makes enumeration impossible.
           Fatal: bool }
 
@@ -231,6 +372,8 @@ module Analysis =
         let reachable = reachableSet g
         let minCost = minCostMap g
         let leftRec = leftRecursiveSet g
+        let canBeNonEmpty = canBeNonEmptySet g productive
+        let language = classifyLanguage g productive reachable canBeNonEmpty
 
         let definedNames = g.Rules |> List.map (fun r -> r.Name) |> Set.ofList
 
@@ -243,6 +386,7 @@ module Analysis =
         |> List.iter (fun (name, n) ->
             diagnostics.Add
                 { Severity = Warning
+                  Lane = Structure
                   Message = sprintf "Rule '%s' is defined %d times; the last definition wins." name n })
 
         // Undefined references (fatal).
@@ -255,6 +399,7 @@ module Analysis =
         for (fromRule, ref) in undefined do
             diagnostics.Add
                 { Severity = Error
+                  Lane = Structure
                   Message = sprintf "Rule '%s' references undefined nonterminal '%s'." fromRule ref }
 
         // Start symbol non-productive (fatal): only infinite strings, or nothing.
@@ -263,6 +408,7 @@ module Analysis =
         if not startProductive then
             diagnostics.Add
                 { Severity = Error
+                  Lane = Generation
                   Message =
                     sprintf
                         "Start symbol '%s' is non-productive: it cannot derive any finite string (the grammar requires infinitely long strings or is empty)."
@@ -273,6 +419,7 @@ module Analysis =
             if name <> g.Start && Set.contains name definedNames && not (Set.contains name productive) then
                 diagnostics.Add
                     { Severity = Warning
+                      Lane = Generation
                       Message =
                         sprintf "Rule '%s' is reachable but non-productive (it can never complete a finite string)." name }
 
@@ -281,13 +428,18 @@ module Analysis =
             if not (Set.contains r.Name reachable) then
                 diagnostics.Add
                     { Severity = Warning
+                      Lane = Structure
                       Message = sprintf "Rule '%s' is unreachable from the start symbol '%s'." r.Name g.Start }
 
-        // Left recursion (info).
+        // Left recursion (info, parsing lane).
         for name in leftRec do
             diagnostics.Add
                 { Severity = Info
-                  Message = sprintf "Rule '%s' is left-recursive. Enumeration is bounded by size and stays safe." name }
+                  Lane = Parsing
+                  Message =
+                    sprintf
+                        "Rule '%s' is left-recursive: fine for generation, but a top-down (LL/recursive-descent) parser would loop. Bottom-up (LR) or general (Earley/GLR) parsers handle it."
+                        name }
 
         let diags = List.ofSeq diagnostics
         let fatal = diags |> List.exists (fun d -> d.Severity = Error)
@@ -298,4 +450,5 @@ module Analysis =
           Reachable = reachable
           MinCost = minCost
           LeftRecursive = leftRec
+          Language = language
           Fatal = fatal }
