@@ -1,5 +1,7 @@
 # EBNF Sample Generator
 
+**[Live demo →](https://arrow7000.github.io/bnf-generator/)**
+
 A grammar-exploration tool. Paste a W3C-style EBNF grammar and it:
 
 1. parses it,
@@ -64,6 +66,10 @@ Flags: `--size N` (max derivation-tree node count, default 12), `--limit M` (max
 samples printed, default 50), `--sep S` (separator between sequence elements).
 
 ### Web UI
+
+A hosted build is available at
+**[arrow7000.github.io/bnf-generator](https://arrow7000.github.io/bnf-generator/)**
+(deployed automatically from `main` via GitHub Actions). To run it locally:
 
 ```bash
 cd src/BnfGen.Web
