@@ -1,0 +1,12 @@
+**/bin/
+**/obj/
+**/build/
+**/dist/
+**/node_modules/
+**/.fable/
+**/fable_modules/
+.git/
+.worktrees/
+.vs/
+.idea/
+*.user

@@ -1,17 +1,58 @@
 # EBNF Sample Generator
 
-A grammar-exploration tool. Paste a W3C-style EBNF grammar and it:
+A grammar-exploration tool. Paste a W3C-style EBNF grammar and it produces
+**realistic example strings** that conform to it.
 
-1. parses it,
-2. statically checks it for pathologies (infinite-only rules, undefined
-   references, unreachable rules, ambiguity, left recursion), and
-3. performs **bounded exhaustive enumeration** of derivations to produce sample
-   strings, up to a size bound you control.
+The web UI generates samples with a **grammar-constrained LLM**: the grammar is
+compiled to GBNF and sent to [Fireworks AI](https://fireworks.ai)'s grammar
+mode, which masks the model token-by-token so it **cannot emit a string outside
+the language**. That guarantee is why even a small, cheap model is safe on
+"looks-like-JSON-but-subtly-isn't" specs, and why the samples look like real
+data (e.g. plausible emails) instead of the dense symbol-soup that exhaustive
+enumeration tends to produce first for parser-hostile grammars.
+
+The original engine - parsing, static pathology checks (infinite-only rules,
+undefined references, unreachable rules, ambiguity, left recursion), and
+**bounded exhaustive enumeration** of derivations - still lives in `BnfGen.Core`
+and powers the CLI and tests. It is kept as the trustworthy backbone: the web
+app surfaces its static facts (language class, min size, saturation size) and
+diagnostics alongside the LLM samples.
 
 Everything is written in F#. The core is pure and Fable-compatible, so the exact
-same logic runs in the .NET CLI and in the browser (compiled to JavaScript).
+same logic runs in the .NET CLI, the browser (Fable -> JS), and the backend API.
 
-## How exhaustiveness works here
+## Architecture
+
+```
+Browser SPA (GitHub Pages)  --POST /api/generate-->  BnfGen.Api (Render)  -->  Fireworks grammar mode
+                                                          |
+                                          BnfGen.Core: parse + analyze + Gbnf.compile
+```
+
+- `BnfGen.Core` parses the EBNF, rejects fatal grammars, and `Gbnf.compile`s the
+  AST to a GBNF grammar (the mapping is ~1:1).
+- `BnfGen.Api` is a thin proxy: it holds the Fireworks API key, calls grammar
+  mode `count` times (varied seeds) for diverse samples, and returns them with
+  the compiled GBNF and the static grammar facts/diagnostics.
+- The frontend never sees the key; it only talks to `BnfGen.Api`.
+
+### Inference engine and model
+
+Fireworks is currently the only hosted API that accepts **arbitrary
+context-free (GBNF) grammars** (Groq/Cerebras only constrain to JSON Schema,
+which cannot express most EBNF). The model is set by `FIREWORKS_MODEL` and any
+serverless model works, since all support grammar mode. Notes:
+
+- Default: `accounts/fireworks/models/llama-v3p1-8b-instruct` - cheap
+  (~$0.20/1M tokens, fractions of a cent per request), fast, non-reasoning.
+- The truly tiny dense models (Llama 3.2 1B/3B, Qwen3 1.7B/4B) are **not on
+  Fireworks serverless** (dedicated GPU only), so they aren't cheap options.
+- Cheapest serverless: `accounts/fireworks/models/gpt-oss-20b` ($0.07/$0.30) -
+  fast MoE, but a reasoning model, so test grammar mode before relying on it.
+- Correctness does not depend on the model (the mask guarantees it); model size
+  only affects sample variety/realism.
+
+## How exhaustiveness works (CLI engine)
 
 Enumeration is **bounded by derivation-tree size (node count)**, not by string
 length. Every rule expansion and every loop repetition consumes at least one
@@ -33,12 +74,13 @@ parsing lane, because generability and parseability are independent. See
 
 ## Project layout
 
-| Project          | Purpose                                                        |
-| ---------------- | -------------------------------------------------------------- |
-| `BnfGen.Core`    | Pure pipeline: AST, parser, analysis, enumeration, rendering.  |
-| `BnfGen.Cli`     | Command-line front end over the pipeline.                      |
-| `BnfGen.Web`     | Client-side Elmish + Feliz UI, compiled with Fable + Vite.     |
-| `BnfGen.Tests`   | xUnit golden tests + FsCheck property tests.                   |
+| Project          | Purpose                                                          |
+| ---------------- | ---------------------------------------------------------------- |
+| `BnfGen.Core`    | Pure pipeline: AST, parser, analysis, enumeration, GBNF, render. |
+| `BnfGen.Api`     | ASP.NET Core minimal API: proxies Fireworks grammar mode.        |
+| `BnfGen.Cli`     | Command-line front end over the pipeline.                        |
+| `BnfGen.Web`     | Client-side Elmish + Feliz UI, compiled with Fable + Vite.       |
+| `BnfGen.Tests`   | xUnit golden tests + FsCheck property tests.                     |
 
 `BnfGen.Web` is intentionally **not** part of `BnfGen.slnx`: it is Fable-only and
 is not built by the .NET toolchain.
@@ -47,6 +89,7 @@ is not built by the .NET toolchain.
 
 - .NET 10 SDK
 - Node.js + npm (for the web UI only)
+- A [Fireworks AI](https://fireworks.ai) API key (for the backend)
 
 ## Running
 
@@ -63,6 +106,25 @@ printf 'list ::= list "," "x" | "x"\n' | dotnet run --project src/BnfGen.Cli -- 
 Flags: `--size N` (max derivation-tree node count, default 12), `--limit M` (max
 samples printed, default 50), `--sep S` (separator between sequence elements).
 
+### Backend API
+
+```bash
+export FIREWORKS_API_KEY=fw-...                  # required
+export FIREWORKS_MODEL=accounts/fireworks/models/llama-v3p1-8b-instruct  # optional
+export ALLOWED_ORIGINS=http://localhost:5173     # optional (CORS; empty = any)
+dotnet run --project src/BnfGen.Api              # listens on $PORT (default 8080)
+```
+
+`POST /api/generate` with `{ "grammar": "...", "count": 10, "temperature": 0.7 }`
+returns `{ samples, gbnf, diagnostics, facts, model }`. Parse errors return 400,
+fatal grammars 422, upstream failures 502. `GET /healthz` returns `ok`. Quick
+check:
+
+```bash
+curl -s localhost:8080/api/generate -H 'content-type: application/json' \
+  -d '{"grammar":"email ::= [a-z]+ \"@\" [a-z]+ \".com\"","count":5}'
+```
+
 ### Web UI
 
 ```bash
@@ -71,14 +133,27 @@ npm install          # first time only
 npm run dev          # runs Fable (watch) + Vite together
 ```
 
-Then open http://localhost:5173. For a production bundle: `npm run build`
-(outputs to `dist/`).
+Then open http://localhost:5173. The frontend calls the backend at
+`VITE_API_URL` (defaults to `http://localhost:8099` in dev). For a production
+bundle: `VITE_API_URL=https://your-api.onrender.com npm run build` (outputs to
+`dist/`).
 
 ### Tests
 
 ```bash
 dotnet test
 ```
+
+## Deploying
+
+- **Backend** -> Render.com via [`render.yaml`](render.yaml) and the
+  [`Dockerfile`](Dockerfile). Set `FIREWORKS_API_KEY` as a secret and
+  `ALLOWED_ORIGINS` to your Pages origin. Free tier works (cold-starts after
+  idle); bump to Starter to keep it warm.
+- **Frontend** -> GitHub Pages via
+  [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml).
+  Set a repository Variable `VITE_API_URL` to the Render URL so the build points
+  the SPA at the API.
 
 ## Grammar syntax (W3C EBNF)
 

@@ -1,0 +1,72 @@
+name: Deploy web app to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/BnfGen.Web/**"
+      - "src/BnfGen.Core/**"
+      - "dotnet-tools.json"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+
+# Allow the GITHUB_TOKEN to deploy to Pages and verify the deployment.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; cancel in-progress runs for newer pushes.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: src/BnfGen.Web/package-lock.json
+
+      - name: Restore .NET tools (Fable)
+        run: dotnet tool restore
+
+      - name: Install npm dependencies
+        working-directory: src/BnfGen.Web
+        run: npm ci
+
+      - name: Build (Fable -> Vite)
+        working-directory: src/BnfGen.Web
+        run: npm run build
+        env:
+          # The deployed backend URL (Render). Set this as a repository
+          # Variable: Settings -> Secrets and variables -> Actions -> Variables.
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: src/BnfGen.Web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

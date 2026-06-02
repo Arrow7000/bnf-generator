@@ -11,6 +11,7 @@
     <Compile Include="Analysis.fs" />
     <Compile Include="Enumerate.fs" />
     <Compile Include="Render.fs" />
+    <Compile Include="Gbnf.fs" />
     <Compile Include="Coverage.fs" />
     <Compile Include="Pipeline.fs" />
     <Compile Include="Presets.fs" />
