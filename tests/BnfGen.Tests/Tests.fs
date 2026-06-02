@@ -273,7 +273,7 @@ let ``coverage saturates at a finite size for an infinite grammar`` () =
 [<Fact>]
 let ``max-reps filter of zero removes all loop repetitions`` () =
     let filters = { Pipeline.noFilters with MaxReps = Some 0 }
-    let out = Pipeline.generateWith filters """ S ::= "a"* """ 8 200
+    let out = Pipeline.generateWith filters """ S ::= "a"* """ 8 1 200
     let ts = texts out
     Assert.Contains("", ts)
     Assert.DoesNotContain("a", ts)
@@ -282,11 +282,27 @@ let ``max-reps filter of zero removes all loop repetitions`` () =
 [<Fact>]
 let ``max-depth filter bounds recursion`` () =
     let filters = { Pipeline.noFilters with MaxDepth = Some 2 }
-    let out = Pipeline.generateWith filters """ parens ::= "(" parens ")" | "" """ 30 200
+    let out = Pipeline.generateWith filters """ parens ::= "(" parens ")" | "" """ 30 1 200
 
     match out.Summary with
     | Some s -> Assert.True(s.MaxRecursionDepth <= 2)
     | None -> Assert.Fail "expected a summary"
+
+[<Fact>]
+let ``min display size hides smaller samples but keeps coverage`` () =
+    let src = """ list ::= list "," "x" | "x" """
+    let full = Pipeline.generate src 30 200
+    let filtered = Pipeline.generateWith Pipeline.noFilters src 30 12 200
+
+    // Every displayed sample respects the min size...
+    Assert.True(filtered.Samples |> List.forall (fun s -> s.Size >= 12 || s.InMinimalCover))
+    // ...but coverage/saturation are unchanged by the view filter.
+    match full.Summary, filtered.Summary with
+    | Some a, Some b ->
+        Assert.Equal(a.SaturationSize, b.SaturationSize)
+        Assert.Equal(a.BranchesCovered, b.BranchesCovered)
+        Assert.Equal(a.BranchesTotal, b.BranchesTotal)
+    | _ -> Assert.Fail "expected summaries"
 
 [<Fact>]
 let ``minimal cover is small and present among the samples`` () =

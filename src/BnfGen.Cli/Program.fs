@@ -40,10 +40,12 @@ let private printSummary (s: Pipeline.Summary) =
     printfn "  branch coverage: %d/%d" s.BranchesCovered s.BranchesTotal
     printfn "  fully covered: %b" s.FullyCovered
 
-    if s.FullyCovered then
-        printfn "  minimal covering set: %d sample(s)" s.MinimalCoverSize
-    else
+    if not s.FullyCovered then
         printfn "  minimal covering set: (reach full coverage first)"
+    elif s.MinimalCoverSize = 0 then
+        printfn "  minimal covering set: (not demonstrable - sample scan truncated; lower the size)"
+    else
+        printfn "  minimal covering set: %d sample(s)" s.MinimalCoverSize
 
     match s.SaturationSize with
     | Some n -> printfn "  coverage saturated at size: %d" n

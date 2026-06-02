@@ -75,6 +75,36 @@
       .size-control label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 0.9rem; }
       .size-control input[type="range"] { width: 100%; accent-color: var(--accent); }
 
+      /* Dual-thumb range (min .. max) */
+      .dual { position: relative; height: 24px; }
+      .dual-track {
+        position: absolute; top: 10px; left: 0; right: 0; height: 4px;
+        background: var(--panel-2); border-radius: 2px;
+      }
+      .dual-fill {
+        position: absolute; top: 10px; height: 4px;
+        background: var(--accent); border-radius: 2px;
+      }
+      .dual-input {
+        position: absolute; top: 0; left: 0; width: 100%; height: 24px; margin: 0;
+        background: none; pointer-events: none;
+        -webkit-appearance: none; appearance: none;
+      }
+      .dual-input::-webkit-slider-runnable-track { background: none; height: 24px; }
+      .dual-input::-moz-range-track { background: none; }
+      .dual-input::-webkit-slider-thumb {
+        -webkit-appearance: none; appearance: none; pointer-events: auto;
+        width: 16px; height: 16px; margin-top: 4px; border-radius: 50%;
+        background: var(--accent); border: 2px solid var(--bg); cursor: pointer;
+      }
+      .dual-input::-moz-range-thumb {
+        pointer-events: auto; width: 16px; height: 16px; border-radius: 50%;
+        background: var(--accent); border: 2px solid var(--bg); cursor: pointer;
+      }
+      /* Keep the min thumb grabbable on top. */
+      .dual-min { z-index: 4; }
+      .dual-max { z-index: 3; }
+
       .diag-list { display: flex; flex-direction: column; gap: 8px; }
       .diag {
         display: flex;

@@ -91,16 +91,13 @@ module Coverage =
         |> List.collect (fun r -> ruleToken r.Name :: branchTokensOf r.Name [] r.Body)
         |> Set.ofList
 
-    /// The size at which coverage saturates, computed statically (independent of
-    /// any size bound): the smallest bound at which every coverable rule and
-    /// branch has at least one derivation. Equals the max over all targets of
-    /// the minimum derivation size that exercises that target.
-    let saturationSize
+    /// Implementation of targetMinSizes (see the public wrapper below).
+    let private targetMinSizesImpl
         (g: Grammar)
         (productive: Set<string>)
         (reachable: Set<string>)
         (minCost: Map<string, int>)
-        : int option =
+        : Map<string, int> =
         let useful = Set.intersect productive reachable |> Set.toList
         let INF = Analysis.inf
         let costExpr e = Analysis.costOfExpr minCost e
@@ -162,29 +159,90 @@ module Coverage =
                     dist <- Map.add b (dist.[a] + w) dist
                     changed <- true
 
-        // For each coverable branch: cover size = context to host R + R's rule
-        // node + the branch body's minimum size.
-        let coverSizes =
-            useful
-            |> List.collect (fun r ->
-                let branches =
-                    match Map.tryFind r g.RuleMap with
-                    | Some (Alt bs) -> bs
-                    | Some body -> [ body ]
-                    | None -> []
+        let clampAdd a b = if a >= INF || b >= INF then INF else a + b
 
-                branches
-                |> List.filter (Analysis.exprProductive productive)
-                |> List.map (fun branchExpr ->
-                    let d = dist.[r]
-                    let cb = costExpr branchExpr
-                    if d >= INF || cb >= INF then INF else d + 1 + cb))
+        // For each coverage target (rule + every nested branch, using the same
+        // path scheme as `targets`), the minimum derivation size that exercises
+        // it: dist[R] (context to host an R node) + the cost of R's subtree
+        // forced through that target, everything else minimal.
+        let tokensFor (rule: string) : (string * int) list =
+            let dR = dist.[rule]
 
-        match coverSizes with
-        | [] -> None
-        | _ ->
-            let m = List.max coverSizes
-            if m >= INF then None else Some m
+            if dR >= INF then
+                []
+            else
+                let body =
+                    match Map.tryFind rule g.RuleMap with
+                    | Some b -> b
+                    | None -> Epsilon
+
+                let entries = System.Collections.Generic.List<string * int>()
+                // Rule token: the cheapest R-subtree embedded.
+                entries.Add(ruleToken rule, clampAdd dR (clampAdd 1 (costExpr body)))
+
+                // `ctx` is the cost accrued from R's rule node down to the current
+                // position (rule node + NSeq nodes + minimal siblings), excluding
+                // the current sub-expression's own cost.
+                let rec walk (path: int list) (ctx: int) (e: Expr) =
+                    if Analysis.exprProductive productive e then
+                        match e with
+                        | Alt bs ->
+                            bs
+                            |> List.iteri (fun i b ->
+                                if Analysis.exprProductive productive b then
+                                    entries.Add(branchToken rule path i, clampAdd dR (clampAdd ctx (costExpr b)))
+                                    walk (i :: path) ctx b)
+                        | Seq xs ->
+                            let costs = xs |> List.map costExpr
+
+                            xs
+                            |> List.iteri (fun j xj ->
+                                let others =
+                                    costs
+                                    |> List.mapi (fun k c -> k, c)
+                                    |> List.filter (fun (k, _) -> k <> j)
+                                    |> List.fold (fun acc (_, c) -> clampAdd acc c) 0
+
+                                walk (j :: path) (clampAdd ctx (clampAdd 1 others)) xj)
+                        | Opt x -> walk (0 :: path) ctx x
+                        | Star x
+                        | Plus x -> walk (0 :: path) (clampAdd ctx 1) x
+                        | NonTerminal _
+                        | Terminal _
+                        | CharClass _
+                        | Epsilon -> ()
+
+                walk [] 1 body
+                List.ofSeq entries
+
+        useful
+        |> List.collect tokensFor
+        |> List.filter (fun (_, s) -> s < INF)
+        |> Map.ofList
+
+    /// Minimum derivation size needed to exercise each coverage target (keyed by
+    /// the same tokens as `targets`). Static: independent of any size bound.
+    let targetMinSizes
+        (g: Grammar)
+        (productive: Set<string>)
+        (reachable: Set<string>)
+        (minCost: Map<string, int>)
+        : Map<string, int> =
+        targetMinSizesImpl g productive reachable minCost
+
+    /// The size at which coverage saturates: the max over all target min sizes.
+    let saturationSize
+        (g: Grammar)
+        (productive: Set<string>)
+        (reachable: Set<string>)
+        (minCost: Map<string, int>)
+        : int option =
+        let m = targetMinSizes g productive reachable minCost
+
+        if Map.isEmpty m then
+            None
+        else
+            Some(m |> Map.toSeq |> Seq.map snd |> Seq.max)
 
     /// Count tokens of a given kind ("R:" rules, "B:" branches).
     let countKind (prefix: string) (tokens: Set<string>) : int =

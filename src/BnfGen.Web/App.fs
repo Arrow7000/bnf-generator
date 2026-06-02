@@ -20,6 +20,7 @@ let private depthSliderMax = 8
 
 type Model =
     { Source: string
+      MinSize: int
       MaxSize: int
       ShowAdvanced: bool
       RepLimit: int
@@ -28,7 +29,8 @@ type Model =
 
 type Msg =
     | SetSource of string
-    | SetSize of int
+    | SetMinSize of int
+    | SetMaxSize of int
     | ToggleAdvanced
     | SetReps of int
     | SetDepth of int
@@ -42,7 +44,8 @@ let private filtersOf (m: Model) : Pipeline.Filters =
           MaxDepth = (if m.DepthLimit >= depthSliderMax then None else Some m.DepthLimit) }
 
 let private regenerate (model: Model) : Model =
-    { model with Output = Pipeline.generateWith (filtersOf model) model.Source model.MaxSize displayLimit }
+    { model with
+        Output = Pipeline.generateWith (filtersOf model) model.Source model.MaxSize model.MinSize displayLimit }
 
 // Coalesce rapid changes (e.g. dragging the slider) into one regeneration after
 // a short quiet period, so heavy grammars don't recompute on every step.
@@ -58,6 +61,7 @@ let private scheduleRegen: Cmd<Msg> =
 let private init () : Model * Cmd<Msg> =
     regenerate
         { Source = Presets.defaultSource
+          MinSize = 1
           MaxSize = 24
           ShowAdvanced = false
           RepLimit = repSliderMax
@@ -68,7 +72,8 @@ let private init () : Model * Cmd<Msg> =
 let private update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
     match msg with
     | SetSource s -> { model with Source = s }, scheduleRegen
-    | SetSize n -> { model with MaxSize = n }, scheduleRegen
+    | SetMinSize n -> { model with MinSize = min n model.MaxSize }, scheduleRegen
+    | SetMaxSize n -> { model with MaxSize = max n model.MinSize }, scheduleRegen
     | SetReps n -> { model with RepLimit = n }, scheduleRegen
     | SetDepth n -> { model with DepthLimit = n }, scheduleRegen
     | ToggleAdvanced -> regenerate { model with ShowAdvanced = not model.ShowAdvanced }, Cmd.none
@@ -302,10 +307,12 @@ let private thisRunView (out: Pipeline.Output) =
                                     "Minimal cover"
                                     [ "The smallest set of samples that TOGETHER hit every rule and branch (greedy set-cover)."
                                       "Only defined once coverage is complete - until then, raise the size bound to full coverage. The members are marked in the list below." ]
-                                    (if s.FullyCovered then
-                                         textValue (sprintf "%d sample(s)" s.MinimalCoverSize)
+                                    (if not s.FullyCovered then
+                                         Html.span [ prop.className "metric-muted"; prop.text "reach full coverage" ]
+                                     elif s.MinimalCoverSize = 0 then
+                                         Html.span [ prop.className "metric-muted"; prop.text "truncated - lower size" ]
                                      else
-                                         Html.span [ prop.className "metric-muted"; prop.text "reach full coverage" ]) ] ]
+                                         textValue (sprintf "%d sample(s)" s.MinimalCoverSize)) ] ]
                     coverageBar "Rules" s.RulesCovered s.RulesTotal
                     coverageBar "Branches" s.BranchesCovered s.BranchesTotal
                     Html.div [ prop.className "chart-wrap"; prop.children [ growthChart s.Growth s.SaturationSize ] ]
@@ -352,16 +359,23 @@ let private samplesView (out: Pipeline.Output) =
                       [ Html.span
                             [ prop.className "metric-label"
                               prop.children
-                                  [ Html.span [ prop.text (sprintf "%d distinct sample(s)" out.DistinctCount) ]
+                                  [ Html.span
+                                        [ prop.text (
+                                              if out.DisplayCount = out.DistinctCount then
+                                                  sprintf "%d distinct sample(s)" out.DistinctCount
+                                              else
+                                                  sprintf "%d of %d distinct (in size range)" out.DisplayCount out.DistinctCount
+                                          ) ]
                                     infoTip
-                                        [ "Distinct rendered strings among all derivations with tree size <= the current bound."
-                                          "Different derivations can render to the same string (that is what ambiguity is); those duplicates are merged here and flagged 'ambiguous'." ] ] ]
+                                        [ "Distinct rendered strings among all derivations with tree size <= the max bound."
+                                          "When a min size is set, only those in the size range are listed (cover samples are always shown)."
+                                          "Different derivations can render to the same string (that is what ambiguity is); duplicates are merged and flagged 'ambiguous'." ] ] ]
                         if out.Truncated then
                             badgeTip
                                 "badge badge-warn"
                                 "truncated"
-                                [ "Enumeration hit the internal scan cap (20000 derivations) before exhausting them all, so some larger samples - and occasionally a branch's first appearance - may be missing."
-                                  "Lower the size bound for a complete, untruncated picture." ]
+                                [ "The sample search was cut short - by a count cap or a work budget that keeps the tool responsive on explosive grammars - so the sample list is incomplete."
+                                  "Coverage and saturation are computed exactly (statically) and remain correct regardless. Lower the max size for a complete sample list." ]
                         if out.Ambiguous then
                             badgeTip
                                 "badge badge-info"
@@ -500,21 +514,35 @@ let private view (model: Model) (dispatch: Msg -> unit) =
                                             [ prop.className "size-control"
                                               prop.children
                                                   [ Html.label
-                                                        [ prop.htmlFor "size"
-                                                          prop.className "metric-label"
+                                                        [ prop.className "metric-label"
                                                           prop.children
-                                                              [ Html.span [ prop.text (sprintf "Max derivation size (tree nodes): %d" model.MaxSize) ]
+                                                              [ Html.span [ prop.text (sprintf "Derivation size: %d to %d (tree nodes)" model.MinSize model.MaxSize) ]
                                                                 infoTip
-                                                                    [ "Bounds the number of nodes in each derivation tree. It is NOT string length."
-                                                                      "Every rule expansion and every loop repetition costs at least one node, so a finite budget guarantees the search terminates (even with left recursion)."
-                                                                      "Raise it to explore deeper and longer derivations; watch the coverage and saturation numbers respond." ] ] ]
-                                                    Html.input
-                                                        [ prop.id "size"
-                                                          prop.type' "range"
-                                                          prop.min 1
-                                                          prop.max 40
-                                                          prop.value model.MaxSize
-                                                          prop.onChange (fun (v: string) -> dispatch (SetSize(int v))) ]
+                                                                    [ "The max (right) thumb bounds the size of derivation trees we explore - it governs coverage and saturation. Size is node count, not string length."
+                                                                      "The min (left) thumb is a view filter: it hides samples smaller than this from the list below - handy when a grammar floods you with tiny examples. It does not change coverage, and cover samples stay shown." ] ] ]
+                                                    Html.div
+                                                        [ prop.className "dual"
+                                                          prop.children
+                                                              [ Html.div [ prop.className "dual-track" ]
+                                                                Html.div
+                                                                    [ prop.className "dual-fill"
+                                                                      prop.style
+                                                                          [ style.left (length.percent (float (model.MinSize - 1) / 39.0 * 100.0))
+                                                                            style.width (length.percent (float (model.MaxSize - model.MinSize) / 39.0 * 100.0)) ] ]
+                                                                Html.input
+                                                                    [ prop.className "dual-input dual-min"
+                                                                      prop.type' "range"
+                                                                      prop.min 1
+                                                                      prop.max 40
+                                                                      prop.value model.MinSize
+                                                                      prop.onChange (fun (v: string) -> dispatch (SetMinSize(int v))) ]
+                                                                Html.input
+                                                                    [ prop.className "dual-input dual-max"
+                                                                      prop.type' "range"
+                                                                      prop.min 1
+                                                                      prop.max 40
+                                                                      prop.value model.MaxSize
+                                                                      prop.onChange (fun (v: string) -> dispatch (SetMaxSize(int v))) ] ] ]
                                                     Html.button
                                                         [ prop.className "advanced-toggle"
                                                           prop.onClick (fun _ -> dispatch ToggleAdvanced)
