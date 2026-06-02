@@ -20,10 +20,10 @@ let private apiBase: string =
     let raw: obj = emitJsExpr () "import.meta.env.VITE_API_URL"
 
     if isNullOrUndefined raw then
-        "http://localhost:8099"
+        "http://localhost:8080"
     else
         let s = unbox<string> raw
-        if s = "" then "http://localhost:8099" else s
+        if s = "" then "http://localhost:8080" else s
 
 // ---------------------------------------------------------------------------
 // Wire types for the /api/generate response (decoded dynamically to avoid a

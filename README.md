@@ -134,7 +134,7 @@ npm run dev          # runs Fable (watch) + Vite together
 ```
 
 Then open http://localhost:5173. The frontend calls the backend at
-`VITE_API_URL` (defaults to `http://localhost:8099` in dev). For a production
+`VITE_API_URL` (defaults to `http://localhost:8080` in dev). For a production
 bundle: `VITE_API_URL=https://your-api.onrender.com npm run build` (outputs to
 `dist/`).
 
