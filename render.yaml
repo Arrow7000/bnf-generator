@@ -14,12 +14,13 @@ services:
       # Set this in the Render dashboard (Environment -> Secret). Never commit it.
       - key: FIREWORKS_API_KEY
         sync: false
-      # Must be a model that is actually deployed on serverless for your account.
-      # In practice only gpt-oss-20b / gpt-oss-120b are; dense models (Llama,
-      # Qwen3 Instruct, etc.) return 404. gpt-oss is a reasoning model - verify
-      # grammar mode output is clean for your grammars.
+      # Must be a NON-reasoning model that is deployed on serverless: reasoning
+      # models (gpt-oss, deepseek-v4, glm) leak their analysis channel through
+      # grammar mode and produce garbage on permissive grammars. Kimi K2.6 is
+      # non-reasoning and produces clean, realistic samples. Check the live
+      # catalog with GET /v1/models.
       - key: FIREWORKS_MODEL
-        value: accounts/fireworks/models/gpt-oss-20b
+        value: accounts/fireworks/models/kimi-k2p6
       # The GitHub Pages origin allowed to call this API (no trailing slash).
       - key: ALLOWED_ORIGINS
         value: https://arrow7000.github.io

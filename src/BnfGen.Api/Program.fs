@@ -100,10 +100,10 @@ let private floatOr (d: float) (n: Nullable<float>) = if n.HasValue then n.Value
 // ---------------------------------------------------------------------------
 
 let private systemPrompt =
-    "You generate one example string that conforms to a formal grammar. The decoder is already constrained to the grammar, so every token you produce is valid - your job is purely to make the example varied and realistic: vary length and structure, exercise different alternatives, and prefer values a human would plausibly write. Reply with the example only - no quotes, labels, or commentary."
+    "You generate a single realistic example string for a formal grammar. The decoder is already constrained to the grammar, so every token is valid - your job is to choose natural, concise values that a real person or system would actually produce, and to STOP as soon as you have one complete, plausible example. Never pad, repeat, enumerate, or explain. Output only the example - no quotes, labels, or commentary."
 
 let private userPrompt =
-    "Produce one realistic, valid example for the grammar. Make it meaningfully different from an obvious or minimal example."
+    "Produce one short, natural, realistic example - about as long as a typical real-world value, never a long or exhaustive one. Stop as soon as it is complete."
 
 // ---------------------------------------------------------------------------
 // App
@@ -185,7 +185,7 @@ let main args =
 
     let cfg: Fireworks.Config =
         { ApiKey = envOr "" "FIREWORKS_API_KEY"
-          Model = envOr "accounts/fireworks/models/gpt-oss-20b" "FIREWORKS_MODEL"
+          Model = envOr "accounts/fireworks/models/kimi-k2p6" "FIREWORKS_MODEL"
           BaseUrl = envOr "https://api.fireworks.ai/inference/v1" "FIREWORKS_BASE_URL" }
 
     let http = new HttpClient()
@@ -238,8 +238,11 @@ let main args =
                             let model = if String.IsNullOrWhiteSpace req.Model then cfg.Model else req.Model
                             let runCfg = { cfg with Model = model }
                             let count = req.Count |> intOr 10 |> max 1 |> min 50
-                            let temperature = req.Temperature |> floatOr 0.7
-                            let maxTokens = req.MaxTokens |> intOr 512 |> max 1 |> min 4096
+                            let temperature = req.Temperature |> floatOr 0.8
+                            // Keep this modest: grammars that allow unbounded
+                            // length (emails, paths) will otherwise fill the
+                            // whole budget instead of stopping at a realistic value.
+                            let maxTokens = req.MaxTokens |> intOr 96 |> max 1 |> min 2048
 
                             let! result =
                                 Fireworks.generateMany http runCfg gbnf systemPrompt userPrompt temperature maxTokens count

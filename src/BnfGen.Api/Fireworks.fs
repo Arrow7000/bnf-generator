@@ -73,17 +73,35 @@ module Fireworks =
         w.Flush()
         Encoding.UTF8.GetString(ms.ToArray())
 
-    let private parseContent (json: string) : Result<string, GenError> =
+    // Some models (e.g. gpt-oss harmony) leak control tokens like "<|return|>"
+    // into the content even under grammar mode. Strip them defensively.
+    let private controlToken =
+        System.Text.RegularExpressions.Regex(@"<\|[a-z_]+\|>")
+
+    let private clean (s: string) = controlToken.Replace(s, "").Trim()
+
+    /// One completion: the cleaned text plus the finish reason ("stop" means the
+    /// model ended naturally; "length" means it was truncated at the token cap -
+    /// usually a runaway on a permissive grammar, which we discard).
+    type Completion = { Text: string; Finish: string }
+
+    let private parseContent (json: string) : Result<Completion, GenError> =
         try
             use doc = JsonDocument.Parse json
             let root = doc.RootElement
 
             match root.TryGetProperty "choices" with
             | true, choices when choices.ValueKind = JsonValueKind.Array && choices.GetArrayLength() > 0 ->
-                let message = choices.[0].GetProperty "message"
+                let choice = choices.[0]
+                let message = choice.GetProperty "message"
+
+                let finish =
+                    match choice.TryGetProperty "finish_reason" with
+                    | true, f when f.ValueKind = JsonValueKind.String -> f.GetString()
+                    | _ -> ""
 
                 match message.TryGetProperty "content" with
-                | true, c when c.ValueKind = JsonValueKind.String -> Ok(c.GetString())
+                | true, c when c.ValueKind = JsonValueKind.String -> Ok { Text = clean (c.GetString()); Finish = finish }
                 | _ -> Error(Upstream(200, "response had no message content"))
             | _ ->
                 match root.TryGetProperty "error" with
@@ -103,7 +121,7 @@ module Fireworks =
         (temperature: float)
         (maxTokens: int)
         (seed: int)
-        : Async<Result<string, GenError>> =
+        : Async<Result<Completion, GenError>> =
         async {
             let body =
                 buildBody cfg.Model gbnf systemPrompt userPrompt temperature maxTokens seed
@@ -140,15 +158,20 @@ module Fireworks =
             if String.IsNullOrWhiteSpace cfg.ApiKey then
                 return Error(Configuration "FIREWORKS_API_KEY is not set on the server")
             else
+                // Over-issue a little: naturally-completed samples are the keepers,
+                // and some calls get discarded (truncated runaways), so we ask for
+                // a few extra to still land near `count`.
+                let issued = min 50 (count + max 2 (count / 2))
+
                 let calls =
-                    [ for i in 1..count -> generateOne http cfg gbnf systemPrompt userPrompt temperature maxTokens i ]
+                    [ for i in 1..issued -> generateOne http cfg gbnf systemPrompt userPrompt temperature maxTokens i ]
 
                 let! results = Async.Parallel(calls, maxDegreeOfParallelism = 8)
 
                 let oks =
                     results
                     |> Array.choose (function
-                        | Ok s -> Some s
+                        | Ok c -> Some c
                         | _ -> None)
                     |> Array.toList
 
@@ -161,7 +184,16 @@ module Fireworks =
 
                     return Error(defaultArg firstErr (Transport "no results"))
                 else
-                    let seen = System.Collections.Generic.HashSet<string>()
-                    let distinct = oks |> List.filter (fun s -> seen.Add s)
-                    return Ok distinct
+                    let dedup (items: Completion list) =
+                        let seen = System.Collections.Generic.HashSet<string>()
+
+                        items
+                        |> List.map (fun c -> c.Text)
+                        |> List.filter (fun t -> t <> "" && seen.Add t)
+
+                    // Prefer completions the model ended on its own; fall back to
+                    // whatever we got if a grammar never completes within budget.
+                    let completed = oks |> List.filter (fun c -> c.Finish = "stop") |> dedup
+                    let chosen = if List.isEmpty completed then dedup oks else completed
+                    return Ok(chosen |> List.truncate count)
         }

@@ -40,20 +40,25 @@ Browser SPA (GitHub Pages)  --POST /api/generate-->  BnfGen.Api (Render)  -->  F
 
 Fireworks is currently the only hosted API that accepts **arbitrary
 context-free (GBNF) grammars** (Groq/Cerebras only constrain to JSON Schema,
-which cannot express most EBNF). The model is set by `FIREWORKS_MODEL`; all
-models support grammar mode, but it must be one that is actually **deployed on
-serverless for your account**. Notes:
+which cannot express most EBNF). The model is set by `FIREWORKS_MODEL`. Two
+things matter when choosing it - see the live catalog via
+`GET https://api.fireworks.ai/inference/v1/models`:
 
-- In practice the serverless catalog is small. The dense instruct models (Llama
-  3.x, Qwen3 Instruct) and even the tiny 1B/1.7B/4B models return **404 - not
-  deployed** (they are dedicated-GPU-only). Probe with a 1-token request:
-  a 401 means "deployed, auth failed"; a 404 means "not available".
-- Default: `accounts/fireworks/models/gpt-oss-20b` (~$0.07/$0.30 per 1M tokens,
-  fast MoE). `gpt-oss-120b` is the other reliably-deployed option. Both are
-  **reasoning** models, so confirm grammar-mode output is clean for your
-  grammars (set a low `reasoning_effort` if needed).
-- Correctness does not depend on the model (the mask guarantees it); model
-  choice only affects sample variety/realism.
+1. **It must be deployed on serverless.** The catalog is small and changes; the
+   dense instruct models (Llama 3.x, Qwen3 Instruct) and tiny 1B/1.7B/4B models
+   are typically **not** on serverless (404).
+2. **It must be non-reasoning.** Reasoning models (gpt-oss, deepseek-v4, glm)
+   emit an "analysis" channel that grammar mode forces *through* the grammar -
+   on a permissive grammar that yields garbage (chain-of-thought squeezed into
+   grammar-valid tokens). The leak is masked only on very tight grammars.
+
+- Default: `accounts/fireworks/models/kimi-k2p6` (Kimi K2.6) - non-reasoning,
+  produces clean, realistic samples (verified: `jessica.martinez@rivertech-solutions.com`,
+  `7*(4+9)`). Pricier per token (~$0.95/$4 per 1M) but still cents per request
+  for short samples.
+- Correctness never depends on the model (the mask guarantees grammar
+  adherence); model choice only affects sample variety/realism and the
+  reasoning-leak caveat above.
 
 ## How exhaustiveness works (CLI engine)
 
@@ -113,7 +118,7 @@ samples printed, default 50), `--sep S` (separator between sequence elements).
 
 ```bash
 export FIREWORKS_API_KEY=fw_...                  # required (or put it in .env)
-export FIREWORKS_MODEL=accounts/fireworks/models/gpt-oss-20b  # optional
+export FIREWORKS_MODEL=accounts/fireworks/models/kimi-k2p6  # optional
 export ALLOWED_ORIGINS=http://localhost:5173     # optional (CORS; empty = any)
 dotnet run --project src/BnfGen.Api              # listens on $PORT (default 8080)
 ```
