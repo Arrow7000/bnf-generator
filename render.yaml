@@ -14,10 +14,12 @@ services:
       # Set this in the Render dashboard (Environment -> Secret). Never commit it.
       - key: FIREWORKS_API_KEY
         sync: false
-      # Any Fireworks serverless model works (all support grammar mode). The
-      # tiny 1B/1.7B dense models are NOT on serverless - dedicated GPU only.
+      # Must be a model that is actually deployed on serverless for your account.
+      # In practice only gpt-oss-20b / gpt-oss-120b are; dense models (Llama,
+      # Qwen3 Instruct, etc.) return 404. gpt-oss is a reasoning model - verify
+      # grammar mode output is clean for your grammars.
       - key: FIREWORKS_MODEL
-        value: accounts/fireworks/models/llama-v3p1-8b-instruct
+        value: accounts/fireworks/models/gpt-oss-20b
       # The GitHub Pages origin allowed to call this API (no trailing slash).
       - key: ALLOWED_ORIGINS
         value: https://arrow7000.github.io

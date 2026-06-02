@@ -109,8 +109,52 @@ let private userPrompt =
 // App
 // ---------------------------------------------------------------------------
 
+/// Load a local .env (KEY=VALUE per line) for development convenience, searching
+/// the current directory and a few parents (so it works from a git worktree).
+/// Real environment variables - e.g. on Render - always take precedence.
+let private loadDotEnv () =
+    let rec find (dir: string) (depth: int) =
+        if depth < 0 || String.IsNullOrEmpty dir then
+            None
+        else
+            let candidate = IO.Path.Combine(dir, ".env")
+
+            if IO.File.Exists candidate then
+                Some candidate
+            else
+                match IO.Directory.GetParent dir with
+                | null -> None
+                | parent -> find parent.FullName (depth - 1)
+
+    match find (IO.Directory.GetCurrentDirectory()) 5 with
+    | None -> ()
+    | Some path ->
+        for line in IO.File.ReadAllLines path do
+            let trimmed = line.Trim()
+
+            if trimmed <> "" && not (trimmed.StartsWith "#") then
+                let idx = trimmed.IndexOf '='
+
+                if idx > 0 then
+                    let key = trimmed.Substring(0, idx).Trim()
+                    let raw = trimmed.Substring(idx + 1).Trim()
+
+                    let value =
+                        if
+                            raw.Length >= 2
+                            && ((raw.StartsWith "\"" && raw.EndsWith "\"")
+                                || (raw.StartsWith "'" && raw.EndsWith "'"))
+                        then
+                            raw.Substring(1, raw.Length - 2)
+                        else
+                            raw
+
+                    if String.IsNullOrEmpty(Environment.GetEnvironmentVariable key) then
+                        Environment.SetEnvironmentVariable(key, value)
+
 [<EntryPoint>]
 let main args =
+    loadDotEnv ()
     let builder = WebApplication.CreateBuilder(args)
 
     let allowedOrigins = Environment.GetEnvironmentVariable "ALLOWED_ORIGINS"
@@ -141,7 +185,7 @@ let main args =
 
     let cfg: Fireworks.Config =
         { ApiKey = envOr "" "FIREWORKS_API_KEY"
-          Model = envOr "accounts/fireworks/models/llama-v3p1-8b-instruct" "FIREWORKS_MODEL"
+          Model = envOr "accounts/fireworks/models/gpt-oss-20b" "FIREWORKS_MODEL"
           BaseUrl = envOr "https://api.fireworks.ai/inference/v1" "FIREWORKS_BASE_URL" }
 
     let http = new HttpClient()

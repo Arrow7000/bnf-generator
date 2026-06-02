@@ -40,17 +40,20 @@ Browser SPA (GitHub Pages)  --POST /api/generate-->  BnfGen.Api (Render)  -->  F
 
 Fireworks is currently the only hosted API that accepts **arbitrary
 context-free (GBNF) grammars** (Groq/Cerebras only constrain to JSON Schema,
-which cannot express most EBNF). The model is set by `FIREWORKS_MODEL` and any
-serverless model works, since all support grammar mode. Notes:
+which cannot express most EBNF). The model is set by `FIREWORKS_MODEL`; all
+models support grammar mode, but it must be one that is actually **deployed on
+serverless for your account**. Notes:
 
-- Default: `accounts/fireworks/models/llama-v3p1-8b-instruct` - cheap
-  (~$0.20/1M tokens, fractions of a cent per request), fast, non-reasoning.
-- The truly tiny dense models (Llama 3.2 1B/3B, Qwen3 1.7B/4B) are **not on
-  Fireworks serverless** (dedicated GPU only), so they aren't cheap options.
-- Cheapest serverless: `accounts/fireworks/models/gpt-oss-20b` ($0.07/$0.30) -
-  fast MoE, but a reasoning model, so test grammar mode before relying on it.
-- Correctness does not depend on the model (the mask guarantees it); model size
-  only affects sample variety/realism.
+- In practice the serverless catalog is small. The dense instruct models (Llama
+  3.x, Qwen3 Instruct) and even the tiny 1B/1.7B/4B models return **404 - not
+  deployed** (they are dedicated-GPU-only). Probe with a 1-token request:
+  a 401 means "deployed, auth failed"; a 404 means "not available".
+- Default: `accounts/fireworks/models/gpt-oss-20b` (~$0.07/$0.30 per 1M tokens,
+  fast MoE). `gpt-oss-120b` is the other reliably-deployed option. Both are
+  **reasoning** models, so confirm grammar-mode output is clean for your
+  grammars (set a low `reasoning_effort` if needed).
+- Correctness does not depend on the model (the mask guarantees it); model
+  choice only affects sample variety/realism.
 
 ## How exhaustiveness works (CLI engine)
 
@@ -109,8 +112,8 @@ samples printed, default 50), `--sep S` (separator between sequence elements).
 ### Backend API
 
 ```bash
-export FIREWORKS_API_KEY=fw-...                  # required
-export FIREWORKS_MODEL=accounts/fireworks/models/llama-v3p1-8b-instruct  # optional
+export FIREWORKS_API_KEY=fw_...                  # required (or put it in .env)
+export FIREWORKS_MODEL=accounts/fireworks/models/gpt-oss-20b  # optional
 export ALLOWED_ORIGINS=http://localhost:5173     # optional (CORS; empty = any)
 dotnet run --project src/BnfGen.Api              # listens on $PORT (default 8080)
 ```
